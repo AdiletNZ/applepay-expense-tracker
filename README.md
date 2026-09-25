@@ -16,6 +16,8 @@ POST /api/transactions  ──►  сервер (FastAPI + SQLite)
 Дашборд в браузере: диаграмма по категориям, список трат, смена категории, экспорт в CSV
 ```
 
+> 🟢 **Не хочешь возиться с сервером?** Есть бесплатный вариант на **Google Таблице**: [google-sheets/README.md](google-sheets/README.md). Покупки пишутся прямо в таблицу, итоги и диаграмма там же.
+
 ## Что умеет
 
 - **Автоматически ловит** оплаты Apple Pay: ничего не нужно вводить руками.
@@ -141,5 +143,6 @@ curl -X POST https://твой-сервер/api/transactions \
 
 ```bash
 pip install -r requirements-dev.txt
-pytest
+pytest                      # сервер
+node --test google-sheets/Code.test.js  # скрипт для Google Таблицы
 ```
