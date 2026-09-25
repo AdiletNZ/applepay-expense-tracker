@@ -3,7 +3,7 @@
  *
  * Принимает покупки из автоматизации «Транзакция» в iOS «Быстрых командах»,
  * определяет категорию и записывает строку на лист «Операции».
- * Установка по шагам — в google-sheets/README.md.
+ * Setup guide: README.md (English) / google-sheets/README.ru.md (по-русски).
  */
 
 // ⬇️ Вставь сюда свой секретный токен (тот же, что в Быстрой команде)
@@ -15,6 +15,108 @@ const DEFAULT_CATEGORY = 'Другое';
 const SHEETS = { tx: 'Операции', summary: 'Итоги', categories: 'Категории', rules: 'Правила' };
 const TX_HEADERS = ['Дата', 'Магазин', 'Сумма', 'Валюта', 'Категория', 'Карта'];
 const COL = { date: 1, merchant: 2, amount: 3, currency: 4, category: 5, card: 6 };
+
+// ─────────── Запускаются вручную из редактора (они первые в списке функций) ───────────
+
+/** Запусти один раз из редактора: создаёт листы, формулы и диаграмму. Данные не трогает. */
+function setup() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  ss.setSpreadsheetTimeZone(TIMEZONE);
+
+  // Категории
+  let cats = ss.getSheetByName(SHEETS.categories);
+  if (!cats) {
+    cats = ss.insertSheet(SHEETS.categories);
+    const rows = Object.keys(DEFAULT_CATEGORIES).map((c) => [c, DEFAULT_CATEGORIES[c].join(', ')]);
+    rows.push([DEFAULT_CATEGORY, '']);
+    cats.getRange(1, 1, 1, 2).setValues([['Категория', 'Ключевые слова в названии магазина (через запятую)']]);
+    cats.getRange(2, 1, rows.length, 2).setValues(rows).setWrap(true);
+    cats.setColumnWidth(1, 180).setColumnWidth(2, 600).setFrozenRows(1);
+    cats.getRange(1, 1, 1, 2).setFontWeight('bold');
+  }
+
+  // Правила
+  let rules = ss.getSheetByName(SHEETS.rules);
+  if (!rules) {
+    rules = ss.insertSheet(SHEETS.rules);
+    rules.getRange(1, 1, 1, 2).setValues([['Магазин', 'Категория']]).setFontWeight('bold');
+    rules.setColumnWidth(1, 240).setColumnWidth(2, 180).setFrozenRows(1);
+  }
+
+  // Операции
+  let tx = ss.getSheetByName(SHEETS.tx);
+  if (!tx) {
+    const first = ss.getSheets()[0];
+    tx = first.getLastRow() === 0 && first.getName() !== SHEETS.summary ? first.setName(SHEETS.tx) : ss.insertSheet(SHEETS.tx);
+    tx.getRange(1, 1, 1, TX_HEADERS.length).setValues([TX_HEADERS]).setFontWeight('bold');
+    tx.setFrozenRows(1);
+    tx.setColumnWidth(COL.date, 130).setColumnWidth(COL.merchant, 220).setColumnWidth(COL.category, 170);
+  }
+  tx.getRange('A2:A').setNumberFormat('dd.MM.yyyy HH:mm');
+  tx.getRange('C2:C').setNumberFormat('#,##0.##');
+  const catRule = SpreadsheetApp.newDataValidation()
+    .requireValueInRange(cats.getRange('A2:A'), true)
+    .setAllowInvalid(true)
+    .build();
+  tx.getRange('E2:E').setDataValidation(catRule);
+
+  // Итоги
+  let sum = ss.getSheetByName(SHEETS.summary);
+  if (!sum) {
+    sum = ss.insertSheet(SHEETS.summary, 0);
+    const src = "'" + SHEETS.tx + "'!A2:F";
+    sum.getRange('A1:A3').setValues([['Месяц'], ['Валюта'], ['Всего']]).setFontWeight('bold');
+    sum.getRange('B1')
+      .setFormula('=TODAY()')
+      .setNumberFormat('mmmm yyyy')
+      .setDataValidation(SpreadsheetApp.newDataValidation().requireDate().setAllowInvalid(true).build())
+      .setNote('Нажми дважды и выбери любой день нужного месяца. Вернуть текущий месяц: впиши =TODAY()');
+    sum.getRange('B2').setValue(DEFAULT_CURRENCY);
+    sum.getRange('B3').setFormula('=SUM(B6:B)').setNumberFormat('#,##0.##').setFontWeight('bold').setFontSize(14);
+    // Служебные ячейки: границы выбранного месяца в формате, который понимает QUERY
+    sum.getRange('Z1').setFormula('=DATE(YEAR(B1),MONTH(B1),1)');
+    sum.getRange('Z2').setFormula('="date \'"&YEAR(Z1)&"-"&RIGHT("0"&MONTH(Z1),2)&"-01\'"');
+    sum.getRange('Z3').setFormula('="date \'"&YEAR(EDATE(Z1,1))&"-"&RIGHT("0"&MONTH(EDATE(Z1,1)),2)&"-01\'"');
+    sum.hideColumns(26);
+    sum.getRange('A5').setFormula(
+      '=IFERROR(QUERY(' + src + ',"select E, sum(C), count(C) where A >= "&Z2&" and A < "&Z3&" and D = \'"&B2&"\' ' +
+      'group by E order by sum(C) desc label E \'Категория\', sum(C) \'Сумма\', count(C) \'Покупок\'",0),"Пока нет покупок")'
+    );
+    sum.getRange('E5').setFormula(
+      '=IFERROR(QUERY(' + src + ',"select year(A), month(A)+1, sum(C) where A is not null and D = \'"&B2&"\' ' +
+      'group by year(A), month(A)+1 order by year(A) desc, month(A)+1 desc ' +
+      'label year(A) \'Год\', month(A)+1 \'Месяц\', sum(C) \'Всего за месяц\'",0),"")'
+    );
+    sum.getRange('B6:B').setNumberFormat('#,##0.##');
+    sum.getRange('G6:G').setNumberFormat('#,##0.##');
+    sum.getRange('A5:G5').setFontWeight('bold');
+    sum.setColumnWidth(1, 190).setColumnWidth(7, 130);
+    sum.insertChart(
+      sum.newChart()
+        .setChartType(Charts.ChartType.PIE)
+        .addRange(sum.getRange('A5:B25'))
+        .setNumHeaders(1)
+        .setOption('title', 'Куда уходят деньги')
+        .setOption('pieHole', 0.45)
+        .setOption('legend', { position: 'right' })
+        .setPosition(1, 9, 0, 0)
+        .build()
+    );
+  }
+  ss.setActiveSheet(sum);
+  SpreadsheetApp.flush();
+}
+
+/** Проверка без iPhone: добавляет тестовую покупку. Потом удали строку. */
+function testTransaction() {
+  const result = addTransaction(SpreadsheetApp.getActiveSpreadsheet(), {
+    merchant: 'Magnum Cash&Carry',
+    amount: '5 400 ₸',
+    card: 'Тест',
+  });
+  Logger.log(result.message);
+}
+
 
 // ───────────────────────── Разбор суммы и категории ─────────────────────────
 
@@ -208,107 +310,6 @@ function onEdit(e) {
     const cat = row[COL.category - COL.merchant];
     if (merchantKey(row[0]) === key && cat !== category) sheet.getRange(i + 2, COL.category).setValue(category);
   });
-}
-
-// ───────────────────────────── Первичная настройка ─────────────────────────────
-
-/** Запусти один раз из редактора: создаёт листы, формулы и диаграмму. Данные не трогает. */
-function setup() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  ss.setSpreadsheetTimeZone(TIMEZONE);
-
-  // Категории
-  let cats = ss.getSheetByName(SHEETS.categories);
-  if (!cats) {
-    cats = ss.insertSheet(SHEETS.categories);
-    const rows = Object.keys(DEFAULT_CATEGORIES).map((c) => [c, DEFAULT_CATEGORIES[c].join(', ')]);
-    rows.push([DEFAULT_CATEGORY, '']);
-    cats.getRange(1, 1, 1, 2).setValues([['Категория', 'Ключевые слова в названии магазина (через запятую)']]);
-    cats.getRange(2, 1, rows.length, 2).setValues(rows).setWrap(true);
-    cats.setColumnWidth(1, 180).setColumnWidth(2, 600).setFrozenRows(1);
-    cats.getRange(1, 1, 1, 2).setFontWeight('bold');
-  }
-
-  // Правила
-  let rules = ss.getSheetByName(SHEETS.rules);
-  if (!rules) {
-    rules = ss.insertSheet(SHEETS.rules);
-    rules.getRange(1, 1, 1, 2).setValues([['Магазин', 'Категория']]).setFontWeight('bold');
-    rules.setColumnWidth(1, 240).setColumnWidth(2, 180).setFrozenRows(1);
-  }
-
-  // Операции
-  let tx = ss.getSheetByName(SHEETS.tx);
-  if (!tx) {
-    const first = ss.getSheets()[0];
-    tx = first.getLastRow() === 0 && first.getName() !== SHEETS.summary ? first.setName(SHEETS.tx) : ss.insertSheet(SHEETS.tx);
-    tx.getRange(1, 1, 1, TX_HEADERS.length).setValues([TX_HEADERS]).setFontWeight('bold');
-    tx.setFrozenRows(1);
-    tx.setColumnWidth(COL.date, 130).setColumnWidth(COL.merchant, 220).setColumnWidth(COL.category, 170);
-  }
-  tx.getRange('A2:A').setNumberFormat('dd.MM.yyyy HH:mm');
-  tx.getRange('C2:C').setNumberFormat('#,##0.##');
-  const catRule = SpreadsheetApp.newDataValidation()
-    .requireValueInRange(cats.getRange('A2:A'), true)
-    .setAllowInvalid(true)
-    .build();
-  tx.getRange('E2:E').setDataValidation(catRule);
-
-  // Итоги
-  let sum = ss.getSheetByName(SHEETS.summary);
-  if (!sum) {
-    sum = ss.insertSheet(SHEETS.summary, 0);
-    const src = "'" + SHEETS.tx + "'!A2:F";
-    sum.getRange('A1:A3').setValues([['Месяц'], ['Валюта'], ['Всего']]).setFontWeight('bold');
-    sum.getRange('B1')
-      .setFormula('=TODAY()')
-      .setNumberFormat('mmmm yyyy')
-      .setDataValidation(SpreadsheetApp.newDataValidation().requireDate().setAllowInvalid(true).build())
-      .setNote('Нажми дважды и выбери любой день нужного месяца. Вернуть текущий месяц: впиши =TODAY()');
-    sum.getRange('B2').setValue(DEFAULT_CURRENCY);
-    sum.getRange('B3').setFormula('=SUM(B6:B)').setNumberFormat('#,##0.##').setFontWeight('bold').setFontSize(14);
-    // Служебные ячейки: границы выбранного месяца в формате, который понимает QUERY
-    sum.getRange('Z1').setFormula('=DATE(YEAR(B1),MONTH(B1),1)');
-    sum.getRange('Z2').setFormula('="date \'"&YEAR(Z1)&"-"&RIGHT("0"&MONTH(Z1),2)&"-01\'"');
-    sum.getRange('Z3').setFormula('="date \'"&YEAR(EDATE(Z1,1))&"-"&RIGHT("0"&MONTH(EDATE(Z1,1)),2)&"-01\'"');
-    sum.hideColumns(26);
-    sum.getRange('A5').setFormula(
-      '=IFERROR(QUERY(' + src + ',"select E, sum(C), count(C) where A >= "&Z2&" and A < "&Z3&" and D = \'"&B2&"\' ' +
-      'group by E order by sum(C) desc label E \'Категория\', sum(C) \'Сумма\', count(C) \'Покупок\'",0),"Пока нет покупок")'
-    );
-    sum.getRange('E5').setFormula(
-      '=IFERROR(QUERY(' + src + ',"select year(A), month(A)+1, sum(C) where A is not null and D = \'"&B2&"\' ' +
-      'group by year(A), month(A)+1 order by year(A) desc, month(A)+1 desc ' +
-      'label year(A) \'Год\', month(A)+1 \'Месяц\', sum(C) \'Всего за месяц\'",0),"")'
-    );
-    sum.getRange('B6:B').setNumberFormat('#,##0.##');
-    sum.getRange('G6:G').setNumberFormat('#,##0.##');
-    sum.getRange('A5:G5').setFontWeight('bold');
-    sum.setColumnWidth(1, 190).setColumnWidth(7, 130);
-    sum.insertChart(
-      sum.newChart()
-        .setChartType(Charts.ChartType.PIE)
-        .addRange(sum.getRange('A5:B25'))
-        .setNumHeaders(1)
-        .setOption('title', 'Куда уходят деньги')
-        .setOption('pieHole', 0.45)
-        .setOption('legend', { position: 'right' })
-        .setPosition(1, 9, 0, 0)
-        .build()
-    );
-  }
-  ss.setActiveSheet(sum);
-  SpreadsheetApp.flush();
-}
-
-/** Проверка без iPhone: добавляет тестовую покупку. Потом удали строку. */
-function testTransaction() {
-  const result = addTransaction(SpreadsheetApp.getActiveSpreadsheet(), {
-    merchant: 'Magnum Cash&Carry',
-    amount: '5 400 ₸',
-    card: 'Тест',
-  });
-  Logger.log(result.message);
 }
 
 const DEFAULT_CATEGORIES = {
