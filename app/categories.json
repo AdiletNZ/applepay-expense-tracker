@@ -1,0 +1,45 @@
+{
+  "_comment": "Категория -> ключевые слова в названии магазина (без учёта регистра, по целым словам). Порядок важен: побеждает первое совпадение. Меняй как хочешь.",
+  "categories": {
+    "Доставка еды": ["wolt", "glovo", "yandex eats", "yandex eda", "яндекс еда", "chocofood", "delivery club"],
+    "Кафе и рестораны": [
+      "starbucks", "coffee", "кофе", "coffee boom", "costa", "kfc", "burger", "hardee's", "hardees",
+      "mcdonald's", "mcdonalds", "dodo", "додо", "pizza", "пицца", "del papa", "salam bro", "tanuki",
+      "cafe", "café", "кафе", "restaurant", "ресторан", "bar", "бар", "doner", "донер", "шаурма", "sushi", "суши"
+    ],
+    "Продукты": [
+      "magnum", "small", "galmart", "anvar", "arbuz", "metro", "ramstore", "toimart", "интерфуд",
+      "market", "маркет", "supermarket", "супермаркет", "grocery", "продукты", "азбука вкуса", "пятёрочка",
+      "пятерочка", "перекрёсток", "перекресток", "магнит", "вкусвилл", "lidl", "aldi", "carrefour", "spar"
+    ],
+    "Такси и транспорт": [
+      "yandex go", "yandex taxi", "яндекс go", "яндекс такси", "indrive", "indriver", "uber", "bolt",
+      "taxi", "такси", "onay", "авиа", "air astana", "fly arystan", "scat", "airport", "аэропорт"
+    ],
+    "Авто и топливо": [
+      "helios", "sinooil", "kazmunaygas", "kmg", "qazaq oil", "gazprom", "газпром", "lukoil", "лукойл",
+      "shell", "азс", "fuel", "parking", "парковка", "автомойка", "car wash"
+    ],
+    "Здоровье и аптеки": [
+      "europharma", "biosfera", "аптека", "apteka", "pharmacy", "sadykhan", "invivo", "олимп", "clinic", "клиника",
+      "dent", "стоматология"
+    ],
+    "Одежда и покупки": [
+      "zara", "h&m", "bershka", "pull&bear", "lc waikiki", "defacto", "koton", "uniqlo", "adidas", "nike",
+      "mango", "massimo dutti", "sulpak", "technodom", "mechta", "мечта", "wildberries", "ozon", "lamoda",
+      "ikea", "leroy", "mega", "dostyk plaza"
+    ],
+    "Подписки и сервисы": [
+      "apple.com", "itunes", "netflix", "spotify", "youtube", "google", "yandex plus", "яндекс плюс",
+      "chatgpt", "openai", "anthropic", "claude", "icloud", "kinopoisk", "кинопоиск", "ivi"
+    ],
+    "Связь и интернет": ["beeline", "kcell", "activ", "tele2", "altel", "kazakhtelecom", "мтс", "megafon", "мегафон"],
+    "Развлечения": [
+      "kinopark", "chaplin", "cinema", "кино", "kinoteatr", "steam", "playstation", "xbox", "боулинг",
+      "bowling", "концерт", "ticketon", "kassir"
+    ],
+    "Спорт": ["fitness", "фитнес", "gym", "invictus", "world class", "спортзал", "decathlon"],
+    "Красота": ["барбершоп", "barbershop", "barber", "салон", "salon", "beauty", "letu", "лэтуаль", "gold apple", "золотое яблоко"]
+  },
+  "default": "Другое"
+}

@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<title>Мои траты</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f5f7; --card: #ffffff; --text: #1d1d1f; --muted: #6e6e73; --line: #e5e5ea;
+    --accent: #0a84ff; --danger: #ff3b30;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #000; --card: #1c1c1e; --text: #f5f5f7; --muted: #98989d; --line: #2c2c2e; --danger: #ff453a; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    padding: env(safe-area-inset-top) 16px calc(24px + env(safe-area-inset-bottom));
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  header { display: flex; align-items: center; justify-content: space-between; margin: 20px 0 12px; gap: 8px; }
+  h1 { font-size: 28px; margin: 0; }
+  .month { display: flex; align-items: center; gap: 4px; }
+  .month span { min-width: 120px; text-align: center; font-weight: 600; text-transform: capitalize; }
+  button, select, input {
+    font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line);
+    border-radius: 10px; padding: 6px 10px;
+  }
+  button { cursor: pointer; }
+  button.icon { width: 36px; height: 36px; padding: 0; font-size: 18px; }
+  .card { background: var(--card); border-radius: 16px; padding: 16px; margin-bottom: 12px; }
+  .total { font-size: 34px; font-weight: 700; letter-spacing: -0.5px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .chart-wrap { position: relative; height: 240px; margin-top: 8px; }
+  .cats { list-style: none; margin: 0; padding: 0; }
+  .cats li { padding: 10px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .cats li:last-child { border-bottom: 0; }
+  .cats li.active { font-weight: 600; }
+  .row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .bar { height: 6px; border-radius: 3px; background: var(--line); margin-top: 6px; overflow: hidden; }
+  .bar i { display: block; height: 100%; border-radius: 3px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+  .tx { padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .tx:last-child { border-bottom: 0; }
+  .tx .merchant { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tx .amount { font-weight: 600; white-space: nowrap; }
+  .tx .meta { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+  .tx .meta .muted { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tx select { padding: 3px 6px; font-size: 14px; max-width: 55%; }
+  .tx button.del { border: 0; background: none; color: var(--danger); font-size: 14px; padding: 3px 0; }
+  .day { margin: 16px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+  .toolbar { display: flex; gap: 8px; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .empty { text-align: center; padding: 32px 0; color: var(--muted); }
+  #login { max-width: 420px; margin: 20vh auto 0; }
+  #login input { width: 100%; margin: 12px 0; padding: 10px; }
+  #login button { width: 100%; padding: 10px; background: var(--accent); color: #fff; border: 0; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <section id="login" class="card hidden">
+    <h2 style="margin-top:0">Вход</h2>
+    <div class="muted">Вставь API_TOKEN с сервера. Он сохранится только в этом браузере.</div>
+    <input id="token" type="password" placeholder="API токен" autocomplete="current-password">
+    <button id="save-token">Войти</button>
+    <div id="login-error" class="muted" style="color:var(--danger);margin-top:8px"></div>
+  </section>
+
+  <section id="app" class="hidden">
+    <header>
+      <h1>Траты</h1>
+      <div class="month">
+        <button class="icon" id="prev" aria-label="Предыдущий месяц">‹</button>
+        <span id="month-label"></span>
+        <button class="icon" id="next" aria-label="Следующий месяц">›</button>
+      </div>
+    </header>
+
+    <div class="card">
+      <div class="row">
+        <div>
+          <div class="muted">Потрачено за месяц</div>
+          <div class="total" id="total">—</div>
+          <div class="muted" id="count"></div>
+        </div>
+        <select id="currency" class="hidden" aria-label="Валюта"></select>
+      </div>
+      <div class="chart-wrap"><canvas id="chart"></canvas></div>
+    </div>
+
+    <div class="card">
+      <ul class="cats" id="cats"></ul>
+    </div>
+
+    <div class="card">
+      <div class="toolbar">
+        <strong id="tx-title">Все операции</strong>
+        <button id="export">Экспорт CSV</button>
+      </div>
+      <div id="txs"></div>
+    </div>
+
+    <div class="muted" style="text-align:center"><a href="#" id="logout" style="color:var(--muted)">Выйти</a></div>
+  </section>
+</main>
+
+<script>
+const COLORS = ["#0a84ff", "#ff9f0a", "#30d158", "#ff375f", "#bf5af2", "#64d2ff",
+                "#ffd60a", "#ac8e68", "#5e5ce6", "#ff6961", "#66d4cf", "#8e8e93", "#32ade6"];
+const SIGNS = { KZT: "₸", RUB: "₽", USD: "$", EUR: "€", GBP: "£" };
+const state = { month: new Date(), currency: null, category: null, categories: [], chart: null, summary: null };
+
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} },
+};
+const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+const money = (v, cur) =>
+  new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(v) + " " + (SIGNS[cur] || cur);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${store.get("token")}`, ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { showLogin("Неверный токен"); throw new Error("unauthorized"); }
+  if (!res.ok) throw new Error(await res.text());
+  return res.status === 204 ? null : res;
+}
+
+function showLogin(err = "") {
+  $("app").classList.add("hidden");
+  $("login").classList.remove("hidden");
+  $("login-error").textContent = err;
+}
+
+function colorFor(category) {
+  const i = state.categories.indexOf(category);
+  return COLORS[(i < 0 ? state.categories.length : i) % COLORS.length];
+}
+
+async function load() {
+  $("login").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  const month = monthKey(state.month);
+  $("month-label").textContent =
+    state.month.toLocaleDateString("ru-RU", { month: "long" }) + " " + state.month.getFullYear();
+  const [cats, summary, txs] = await Promise.all([
+    api("/api/categories").then((r) => r.json()),
+    api(`/api/summary?month=${month}`).then((r) => r.json()),
+    api(`/api/transactions?month=${month}`).then((r) => r.json()),
+  ]);
+  state.categories = cats;
+  state.summary = summary;
+  state.txs = txs;
+  const currencies = summary.currencies.map((c) => c.currency);
+  if (!currencies.includes(state.currency)) state.currency = currencies[0] || null;
+  $("currency").classList.toggle("hidden", currencies.length < 2);
+  $("currency").innerHTML = currencies.map((c) => `<option ${c === state.currency ? "selected" : ""}>${c}</option>`).join("");
+  render();
+}
+
+function render() {
+  const bucket = state.summary.currencies.find((c) => c.currency === state.currency);
+  const cats = bucket ? bucket.categories : [];
+  $("total").textContent = bucket ? money(bucket.total, bucket.currency) : "0";
+  $("count").textContent = bucket ? `${bucket.count} операций` : "Пока нет операций";
+
+  const data = {
+    labels: cats.map((c) => c.category),
+    datasets: [{ data: cats.map((c) => c.total), backgroundColor: cats.map((c) => colorFor(c.category)), borderWidth: 0 }],
+  };
+  if (!window.Chart) { /* CDN недоступен — работаем без диаграммы */ $("chart").parentElement.classList.add("hidden"); }
+  else if (state.chart) { state.chart.data = data; state.chart.update(); }
+  else {
+    state.chart = new Chart($("chart"), {
+      type: "doughnut",
+      data,
+      options: {
+        cutout: "68%", maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: (ctx) => ` ${ctx.label}: ${money(ctx.raw, state.currency)}` } },
+        },
+        onClick: (_, els) => { if (els.length) toggleCategory(state.chart.data.labels[els[0].index]); },
+      },
+    });
+  }
+
+  const max = Math.max(1, ...cats.map((c) => c.total));
+  $("cats").innerHTML = cats.map((c) => `
+    <li data-cat="${esc(c.category)}" class="${c.category === state.category ? "active" : ""}">
+      <div class="row">
+        <span><span class="dot" style="background:${colorFor(c.category)}"></span>${esc(c.category)}</span>
+        <span>${money(c.total, bucket.currency)} <span class="muted">· ${Math.round((c.total / bucket.total) * 100)}%</span></span>
+      </div>
+      <div class="bar"><i style="width:${(c.total / max) * 100}%;background:${colorFor(c.category)}"></i></div>
+    </li>`).join("") || `<li class="empty">Здесь появятся категории</li>`;
+
+  const txs = state.txs.filter((t) => t.currency === state.currency && (!state.category || t.category === state.category));
+  $("tx-title").textContent = state.category ? `${state.category} ✕` : "Все операции";
+  let lastDay = "";
+  $("txs").innerHTML = txs.map((t) => {
+    const day = t.date.slice(0, 10);
+    const head = day !== lastDay
+      ? `<div class="day">${new Date(day + "T00:00").toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "long" })}</div>` : "";
+    lastDay = day;
+    const options = [...new Set([...state.categories, t.category])]
+      .map((c) => `<option ${c === t.category ? "selected" : ""}>${esc(c)}</option>`).join("");
+    return `${head}<div class="tx" data-id="${t.id}">
+      <div class="row"><span class="merchant">${esc(t.merchant)}</span><span class="amount">${money(t.amount, t.currency)}</span></div>
+      <div class="meta">
+        <select data-action="category">${options}<option value="__new">+ Новая категория…</option></select>
+        <span class="muted">${t.date.slice(11, 16)}${t.card ? " · " + esc(t.card) : ""}</span>
+        <button class="del" data-action="delete">Удалить</button>
+      </div>
+    </div>`;
+  }).join("") || `<div class="empty">Нет операций. Оплати что-нибудь через Apple Pay 🙂</div>`;
+}
+
+function toggleCategory(cat) {
+  state.category = state.category === cat ? null : cat;
+  render();
+}
+
+$("cats").addEventListener("click", (e) => {
+  const li = e.target.closest("li[data-cat]");
+  if (li) toggleCategory(li.dataset.cat);
+});
+$("tx-title").addEventListener("click", () => { if (state.category) toggleCategory(state.category); });
+
+$("txs").addEventListener("change", async (e) => {
+  if (e.target.dataset.action !== "category") return;
+  const id = e.target.closest(".tx").dataset.id;
+  let category = e.target.value;
+  if (category === "__new") {
+    category = (prompt("Название новой категории") || "").trim();
+    if (!category) { render(); return; }
+  }
+  const remember = confirm(`Запомнить «${category}» для этого магазина?\nОК — все его прошлые и будущие покупки, Отмена — только эта.`);
+  await api(`/api/transactions/${id}`, { method: "PATCH", body: JSON.stringify({ category, remember }) });
+  load();
+});
+
+$("txs").addEventListener("click", async (e) => {
+  if (e.target.dataset.action !== "delete") return;
+  if (!confirm("Удалить операцию?")) return;
+  await api(`/api/transactions/${e.target.closest(".tx").dataset.id}`, { method: "DELETE" });
+  load();
+});
+
+$("currency").addEventListener("change", (e) => { state.currency = e.target.value; state.category = null; render(); });
+$("prev").onclick = () => { state.month = new Date(state.month.getFullYear(), state.month.getMonth() - 1, 1); state.category = null; load(); };
+$("next").onclick = () => { state.month = new Date(state.month.getFullYear(), state.month.getMonth() + 1, 1); state.category = null; load(); };
+
+$("export").onclick = async () => {
+  const month = monthKey(state.month);
+  const blob = await (await api(`/api/export.csv?month=${month}`)).blob();
+  const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `expenses-${month}.csv` });
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+$("save-token").onclick = () => { store.set("token", $("token").value.trim()); load().catch(() => {}); };
+$("token").addEventListener("keydown", (e) => { if (e.key === "Enter") $("save-token").click(); });
+$("logout").onclick = (e) => { e.preventDefault(); store.set("token", null); showLogin(); };
+
+store.get("token") ? load().catch(() => {}) : showLogin();
+</script>
+</body>
+</html>
