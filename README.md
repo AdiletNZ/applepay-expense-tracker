@@ -277,10 +277,10 @@ The script creates 6 tabs. Their names are in Russian:
 | **Операции** | Transactions | Every purchase ever, one row each: date, shop, amount, currency, category, card |
 | **Категории** | Categories | Which words in a shop name belong to which category. You can edit this. |
 | **Правила** | Rules | Shops you re-categorized by hand. Filled in automatically. |
-| **История** | History | Past months, **newest on top**: a "per month" totals table, then each month's categories with a pie chart next to it |
-| **История (Диаграммы)** | History (charts) | **Charts only**, two per row, to scroll through: first a "spending per month" bar chart, next to it last month, then older months |
+| **История** | History | Every purchase from past months as a feed, like a banking app: **newest on top**, grouped by month with the month's total. Date, time, shop, category, amount, card. |
+| **История (Диаграммы)** | History (charts) | For every past month, **the same pie chart you saw on Итоги that month**, with the month's total and category breakdown next to it. Newest months on top; a "spending per month" bar chart at the very top. |
 
-All purchases stay in one list on **Операции**; the other tabs are calculated from it. The history tabs are rebuilt automatically **every night**, or instantly via **💳 Трекер → 🔄 Обновить историю** (Update history). The numbers are live formulas, so if you fix the category of an old purchase, that month's history updates too.
+All purchases stay in one list on **Операции**; the other tabs are calculated from it. On the 1st of the month, the month that just ended moves into both history tabs. They are rebuilt automatically **every night**, or instantly via **💳 Трекер → 🔄 Обновить историю** (Update history). To change the category of an old purchase, change it on **Операции**; the history follows.
 
 **How a category is chosen:**
 1. If the shop is on the **Правила** (Rules) tab, use that category.

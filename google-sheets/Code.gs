@@ -82,24 +82,21 @@ function setup() {
 }
 
 /**
- * Пересобирает листы «История» и «История (Диаграммы)» из листа «Операции».
+ * Пересобирает листы «История» (лента покупок прошлых месяцев) и
+ * «История (Диаграммы)» (кругляш и итог за каждый прошлый месяц) из листа «Операции».
  * Запускается сам каждую ночь, вручную — меню «💳 Трекер → Обновить историю».
  */
 function updateHistory() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const tx = sheet_(ss, SHEETS.tx);
-  const rows = tx.getLastRow() > 1 ? tx.getRange(2, 1, tx.getLastRow() - 1, COL.category).getValues() : [];
-  const entries = rows
-    .filter((r) => r[0] && typeof r[0].getTime === 'function')
-    .map((r) => [Utilities.formatDate(r[0], TIMEZONE, 'yyyy-MM'), r[COL.category - 1]]);
-  const currentKey = Utilities.formatDate(new Date(), TIMEZONE, 'yyyy-MM');
-  const months = collectMonths_(entries, currentKey);
+  const rows = tx.getLastRow() > 1 ? tx.getRange(2, 1, tx.getLastRow() - 1, TX_HEADERS.length).getValues() : [];
+  const keyOf = (d) => Utilities.formatDate(d, TIMEZONE, 'yyyy-MM');
+  const currentKey = keyOf(new Date());
+  const dated = rows.filter((r) => r[0] && typeof r[0].getTime === 'function');
+  const months = collectMonths_(dated.map((r) => [keyOf(r[0]), r[COL.category - 1]]), currentKey);
 
-  const hist = resetSheet_(ss, SHEETS.history);
-  const charts = resetSheet_(ss, SHEETS.historyCharts);
-  const plan = planHistory_(months);
-  buildHistorySheet_(hist, plan, currentKey);
-  buildHistoryChartsSheet_(charts, plan);
+  buildHistorySheet_(resetSheet_(ss, SHEETS.history), buildFeed_(dated, currentKey, keyOf));
+  buildHistoryChartsSheet_(resetSheet_(ss, SHEETS.historyCharts), planCharts_(months), currentKey);
   SpreadsheetApp.flush();
 }
 
@@ -329,8 +326,8 @@ function installDailyTrigger_() {
 
 const TX_SRC = "'" + SHEETS.tx + "'!A2:F";
 const SUMMARY_CURRENCY = "'" + SHEETS.summary + "'!$B$2";
-const HISTORY = { tableHeaderRow: 4, minBlockRows: 15, gapRows: 1 };
-const CHART_GRID = { firstRow: 4, cellRows: 18, chartRows: 16, leftCol: 1, rightCol: 8, width: 660, height: 336 };
+const FEED = { headerRow: 4, columns: ['Дата', 'Время', 'Магазин', 'Категория', 'Сумма', 'Валюта', 'Карта'] };
+const CHARTS = { firstRow: 4, minBlockRows: 17, gapRows: 2, tableCol: 7, chartWidth: 520, maxChartRows: 17 };
 const ROW_PX = 21;
 
 /** "2026-08" → "Август 2026" */
@@ -362,20 +359,47 @@ function collectMonths_(entries, currentKey) {
 }
 
 /**
- * Где что лежит на листе «История»: сверху таблица «По месяцам»
- * (строка текущего месяца + прошлые), ниже — блок на каждый прошлый месяц.
+ * Раскладка листа «История (Диаграммы)»: сверху «Траты по месяцам» (диаграмма + таблица),
+ * ниже — блок на каждый прошлый месяц: кругляш слева, итог и категории справа.
  */
-function planHistory_(months) {
-  const tableFirstRow = HISTORY.tableHeaderRow + 1;
-  let row = tableFirstRow + months.length + 1 + 2;
-  const blocks = months.map((m, i) => {
-    // заголовок + шапка таблицы + категории + запас на новые категории
-    const height = Math.max(m.categories + 4, HISTORY.minBlockRows);
-    const block = { key: m.key, row: row, height: height, tableRow: tableFirstRow + 1 + i };
-    row += height + HISTORY.gapRows;
+function planCharts_(months) {
+  const trendRows = Math.max(CHARTS.minBlockRows, months.length + 2);
+  let row = CHARTS.firstRow + trendRows + CHARTS.gapRows;
+  const blocks = months.map((m) => {
+    // заголовок, «всего», пустая строка, шапка таблицы, категории + запас на новые
+    const height = Math.max(m.categories + 6, CHARTS.minBlockRows);
+    const block = { key: m.key, row: row, height: height };
+    row += height + CHARTS.gapRows;
     return block;
   });
-  return { tableFirstRow: tableFirstRow, tableLastRow: tableFirstRow + months.length, blocks: blocks };
+  return { trendRows: trendRows, blocks: blocks, lastRow: row };
+}
+
+/**
+ * Лента покупок прошлых месяцев, как история в банковском приложении:
+ * свежие сверху, по месяцам, у каждого месяца строка-заголовок.
+ * Возвращает строки для листа и где стоят заголовки месяцев (индексы от 0).
+ */
+function buildFeed_(rows, currentKey, keyOf) {
+  const past = rows
+    .filter((r) => keyOf(r[0]) < currentKey)
+    .sort((a, b) => b[0].getTime() - a[0].getTime());
+  const values = [];
+  const headers = [];
+  let lastKey = null;
+  past.forEach((r) => {
+    const key = keyOf(r[0]);
+    if (key !== lastKey) {
+      if (lastKey !== null) values.push(['', '', '', '', '', '', '']);
+      headers.push({ index: values.length, key: key, first: values.length + 1, last: values.length });
+      values.push(['📅 ' + monthLabel_(key), '', '', '', '', '', '']);
+      lastKey = key;
+    }
+    // [Дата, Магазин, Сумма, Валюта, Категория, Карта] → [Дата, Время, Магазин, Категория, Сумма, Валюта, Карта]
+    values.push([r[0], r[0], r[1], r[4], r[2], r[3], r[5]]);
+    headers[headers.length - 1].last = values.length - 1;
+  });
+  return { values: values, headers: headers };
 }
 
 /** Формула QUERY: траты по категориям между двумя датами в валюте из «Итогов». */
@@ -428,116 +452,118 @@ function buildSummary_(ss) {
   return sum;
 }
 
-/** Лист «История»: таблица «По месяцам» + блок с категориями и диаграммой на каждый прошлый месяц. */
-function buildHistorySheet_(sheet, plan, currentKey) {
-  sheet.getRange('A1').setValue('История трат').setFontWeight('bold').setFontSize(16);
+/** Лист «История»: все покупки прошлых месяцев лентой, свежие сверху. */
+function buildHistorySheet_(sheet, feed) {
+  const top = FEED.headerRow + 1;
+  ensureSize_(sheet, top + feed.values.length + 1, FEED.columns.length);
+  sheet.getRange('A1').setValue('История покупок').setFontWeight('bold').setFontSize(16);
   sheet.getRange('A2')
-    .setValue('Прошлые месяцы, свежие сверху. Обновляется сама каждую ночь; вручную — меню «💳 Трекер → Обновить историю».')
+    .setValue(feed.values.length
+      ? 'Прошлые месяцы, свежие сверху. Покупки текущего месяца — на листе «Операции». Категорию меняй там же.'
+      : 'Прошлых месяцев пока нет — покупки текущего месяца на листе «Операции», сюда они попадут 1-го числа.')
     .setFontColor('#6e6e73')
     .setFontStyle('italic');
-  sheet.setColumnWidth(1, 220).setColumnWidth(2, 120).setColumnWidth(3, 70).setColumnWidth(4, 70);
+  sheet.getRange(FEED.headerRow, 1, 1, FEED.columns.length).setValues([FEED.columns])
+    .setFontWeight('bold').setBackground('#f1f3f4');
+  sheet.setFrozenRows(FEED.headerRow);
+  sheet.setColumnWidth(1, 150).setColumnWidth(2, 60).setColumnWidth(3, 220).setColumnWidth(4, 170)
+    .setColumnWidth(5, 100).setColumnWidth(6, 60).setColumnWidth(7, 120);
+  if (!feed.values.length) return;
 
-  const lastBlock = plan.blocks[plan.blocks.length - 1];
-  ensureSize_(sheet, lastBlock ? lastBlock.row + lastBlock.height + 1 : 20, 26);
+  sheet.getRange(top, 1, feed.values.length, FEED.columns.length).setValues(feed.values);
+  sheet.getRange(top, 1, feed.values.length, 1).setNumberFormat('dd.MM.yyyy');
+  sheet.getRange(top, 2, feed.values.length, 1).setNumberFormat('HH:mm');
+  sheet.getRange(top, 5, feed.values.length, 1).setNumberFormat(MONEY_FORMAT);
+  feed.headers.forEach((h) => {
+    const row = top + h.index;
+    const first = top + h.first;
+    const last = top + h.last;
+    sheet.getRange(row, 1, 1, FEED.columns.length).setBackground('#e8f0fe').setFontWeight('bold');
+    sheet.getRange(row, 1).setFontSize(12);
+    sheet.getRange(row, 5).setFormula('=SUMIF(F' + first + ':F' + last + ',' + SUMMARY_CURRENCY + ',E' + first + ':E' + last + ')');
+    sheet.getRange(row, 6).setFormula('=' + SUMMARY_CURRENCY);
+  });
+}
 
-  // Таблица «По месяцам»: из неё строится диаграмма трендов
-  const h = HISTORY.tableHeaderRow;
-  sheet.getRange(h - 1, 1).setValue('По месяцам').setFontWeight('bold').setFontSize(13);
-  sheet.getRange(h, 1, 1, 2).setValues([['Месяц', 'Всего']]).setFontWeight('bold');
+/**
+ * Лист «История (Диаграммы)»: для каждого прошлого месяца тот же кругляш, что был в «Итогах»,
+ * а справа — сколько всего ушло и разбивка по категориям. Свежие месяцы сверху.
+ */
+function buildHistoryChartsSheet_(sheet, plan, currentKey) {
+  const t = CHARTS.tableCol;
+  ensureSize_(sheet, plan.lastRow + 1, t + 3);
+  sheet.getRange('A1').setValue('История (Диаграммы)').setFontWeight('bold').setFontSize(16);
+  sheet.getRange('A2')
+    .setValue(plan.blocks.length
+      ? 'Куда уходили деньги в прошлые месяцы. Листай вниз: свежие месяцы сверху.'
+      : 'Прошлых месяцев пока нет — кругляш за этот месяц появится здесь 1-го числа следующего.')
+    .setFontColor('#6e6e73')
+    .setFontStyle('italic');
+  sheet.setColumnWidth(t, 200).setColumnWidth(t + 1, 120).setColumnWidth(t + 2, 60).setColumnWidth(t + 3, 60);
+
+  // «Траты по месяцам»: таблица справа, столбики слева
+  const r0 = CHARTS.firstRow;
+  sheet.getRange(r0, t, 1, 2).setValues([['Месяц', 'Всего']]).setFontWeight('bold');
   const labels = [[monthLabel_(currentKey) + ' (текущий)']].concat(plan.blocks.map((b) => [monthLabel_(b.key)]));
-  sheet.getRange(plan.tableFirstRow, 1, labels.length, 1).setNumberFormat('@').setValues(labels);
-  const totals = [["='" + SHEETS.summary + "'!B3"]].concat(plan.blocks.map((b) => ['=B' + b.row]));
-  sheet.getRange(plan.tableFirstRow, 2, totals.length, 1).setFormulas(totals).setNumberFormat(MONEY_FORMAT);
+  sheet.getRange(r0 + 1, t, labels.length, 1).setNumberFormat('@').setValues(labels);
+  const totals = [["='" + SHEETS.summary + "'!B3"]].concat(plan.blocks.map((b) => ['=' + colLetter_(t + 1) + (b.row + 1)]));
+  sheet.getRange(r0 + 1, t + 1, totals.length, 1).setFormulas(totals).setNumberFormat(MONEY_FORMAT);
+  sheet.insertChart(
+    sheet.newChart()
+      .setChartType(Charts.ChartType.COLUMN)
+      .addRange(sheet.getRange(r0, t, Math.min(labels.length, 12) + 1, 2)) // последние 12 месяцев
+      .setNumHeaders(1)
+      .setOption('title', '📈 Траты по месяцам')
+      .setOption('legend', { position: 'none' })
+      .setOption('hAxis', { direction: -1 }) // в таблице свежие сверху, на графике — слева направо по времени
+      .setOption('width', CHARTS.chartWidth)
+      .setOption('height', CHARTS.minBlockRows * ROW_PX - 6)
+      .setPosition(r0, 1, 0, 0)
+      .build()
+  );
 
   plan.blocks.forEach((b) => {
-    const first = b.row + 2;
-    const last = b.row + b.height - 1;
     const label = monthLabel_(b.key);
-    sheet.getRange(b.row, 1, 1, 4).setBackground('#f1f3f4');
-    sheet.getRange(b.row, 1).setNumberFormat('@').setValue(label).setFontWeight('bold').setFontSize(13);
-    sheet.getRange(b.row, 2).setFormula('=SUM(B' + first + ':B' + last + ')')
-      .setNumberFormat(MONEY_FORMAT).setFontWeight('bold').setFontSize(13);
-    sheet.getRange(b.row, 3).setFormula('=' + SUMMARY_CURRENCY).setFontWeight('bold');
-    sheet.getRange(b.row + 1, 1).setFormula(
+    const tableRow = b.row + 3;
+    const first = tableRow + 1;
+    const last = b.row + b.height - 1;
+    const H = colLetter_(t + 1);
+    sheet.getRange(b.row, t).setNumberFormat('@').setValue('📅 ' + label).setFontWeight('bold').setFontSize(14);
+    sheet.getRange(b.row + 1, t).setValue('Всего ушло').setFontColor('#6e6e73');
+    sheet.getRange(b.row + 1, t + 1).setFormula('=SUM(' + H + first + ':' + H + last + ')')
+      .setNumberFormat(MONEY_FORMAT).setFontWeight('bold').setFontSize(16);
+    sheet.getRange(b.row + 1, t + 2).setFormula('=' + SUMMARY_CURRENCY).setFontWeight('bold');
+    sheet.getRange(tableRow, t).setFormula(
       categoryQueryFormula_(dateLiteral_(b.key), dateLiteral_(nextMonthKey_(b.key)), SUMMARY_CURRENCY)
     );
-    sheet.getRange(b.row + 1, 4).setValue('Доля');
-    sheet.getRange(b.row + 1, 1, 1, 4).setFontWeight('bold');
-    sheet.getRange(first, 4).setFormula(
-      '=ARRAYFORMULA(IF(ISNUMBER(B' + first + ':B' + last + '),B' + first + ':B' + last + '/B' + b.row + ',""))'
+    sheet.getRange(tableRow, t + 3).setValue('Доля');
+    sheet.getRange(tableRow, t, 1, 4).setFontWeight('bold');
+    sheet.getRange(first, t + 3).setFormula(
+      '=ARRAYFORMULA(IF(ISNUMBER(' + H + first + ':' + H + last + '),' + H + first + ':' + H + last + '/' + H + (b.row + 1) + ',""))'
     );
-    sheet.getRange(first, 2, b.height - 2, 1).setNumberFormat(MONEY_FORMAT);
-    sheet.getRange(first, 4, b.height - 2, 1).setNumberFormat('0%');
+    sheet.getRange(first, t + 1, last - first + 1, 1).setNumberFormat(MONEY_FORMAT);
+    sheet.getRange(first, t + 3, last - first + 1, 1).setNumberFormat('0%');
     sheet.insertChart(
       sheet.newChart()
         .setChartType(Charts.ChartType.PIE)
-        .addRange(sheet.getRange(b.row + 1, 1, b.height - 1, 2))
+        .addRange(sheet.getRange(tableRow, t, last - tableRow + 1, 2))
         .setNumHeaders(1)
         .setOption('title', label)
         .setOption('pieHole', 0.45)
         .setOption('legend', { position: 'right' })
-        .setOption('width', 440)
-        .setOption('height', b.height * ROW_PX - 6)
-        .setPosition(b.row, 6, 0, 0)
+        .setOption('width', CHARTS.chartWidth)
+        .setOption('height', Math.min(b.height, CHARTS.maxChartRows) * ROW_PX - 6)
+        .setPosition(b.row, 1, 0, 0)
         .build()
     );
   });
 }
 
-/**
- * Лист «История (Диаграммы)»: только диаграммы, по две в ряд.
- * Первая — «Траты по месяцам», рядом — последний прошедший месяц, дальше — более старые.
- * Данные для каждой диаграммы копируются формулой в скрытые столбцы справа.
- */
-function buildHistoryChartsSheet_(sheet, plan) {
-  const hist = "'" + SHEETS.history + "'!";
-  sheet.getRange('A1').setValue('История (Диаграммы)').setFontWeight('bold').setFontSize(16);
-  sheet.getRange('A2')
-    .setValue(plan.blocks.length
-      ? 'Листай вниз: свежие месяцы сверху. Цифры по категориям — на листе «История».'
-      : 'Прошлых месяцев пока нет — история появится 1-го числа следующего месяца.')
-    .setFontColor('#6e6e73')
-    .setFontStyle('italic');
-
-  const items = [{ trend: true }].concat(plan.blocks);
-  ensureSize_(sheet, CHART_GRID.firstRow + Math.ceil(items.length / 2) * CHART_GRID.cellRows, 30);
-  items.forEach((item, i) => {
-    const row = CHART_GRID.firstRow + Math.floor(i / 2) * CHART_GRID.cellRows;
-    const col = i % 2 === 0 ? CHART_GRID.leftCol : CHART_GRID.rightCol;
-    const dataCol = i % 2 === 0 ? 26 : 29; // Z:AA для левых, AC:AD для правых
-    const dataCell = sheet.getRange(row + 1, dataCol);
-    const builder = sheet.newChart().setPosition(row + 1, col, 0, 0)
-      .setOption('width', CHART_GRID.width)
-      .setOption('height', CHART_GRID.height);
-
-    if (item.trend) {
-      sheet.getRange(row, col).setValue('📈 Траты по месяцам').setFontWeight('bold').setFontSize(13);
-      // последние 12 месяцев; в таблице свежие сверху, поэтому ось развёрнута
-      dataCell.setFormula('=ARRAY_CONSTRAIN(' + hist + 'A' + HISTORY.tableHeaderRow + ':B' + plan.tableLastRow + ',13,2)');
-      builder.setChartType(Charts.ChartType.COLUMN)
-        .addRange(sheet.getRange(row + 1, dataCol, 13, 2))
-        .setNumHeaders(1)
-        .setOption('title', 'Траты по месяцам')
-        .setOption('legend', { position: 'none' })
-        .setOption('hAxis', { direction: -1 });
-    } else {
-      sheet.getRange(row, col).setFormula(
-        '="' + monthLabel_(item.key) + ' — "&TEXT(' + hist + 'B' + item.row + ',"#,##0")&" "&' + SUMMARY_CURRENCY
-      ).setFontWeight('bold').setFontSize(13);
-      const rows = Math.min(item.height - 1, CHART_GRID.chartRows);
-      dataCell.setFormula(
-        '=ARRAY_CONSTRAIN(' + hist + 'A' + (item.row + 1) + ':B' + (item.row + item.height - 1) + ',' + rows + ',2)'
-      );
-      builder.setChartType(Charts.ChartType.PIE)
-        .addRange(sheet.getRange(row + 1, dataCol, rows, 2))
-        .setNumHeaders(1)
-        .setOption('title', monthLabel_(item.key))
-        .setOption('pieHole', 0.45)
-        .setOption('legend', { position: 'right' });
-    }
-    sheet.insertChart(builder.build());
-  });
-  sheet.hideColumns(26, 5);
+/** 8 → "H" */
+function colLetter_(col) {
+  let s = '';
+  for (let n = col; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s;
+  return s;
 }
 
 /** Добавляет строки/столбцы, если лист меньше нужного (новый лист — 1000×26). */
@@ -779,7 +805,9 @@ if (typeof module !== 'undefined') {
     formatMoney: formatMoney_,
     merchantKey: merchantKey_,
     collectMonths: collectMonths_,
-    planHistory: planHistory_,
+    planCharts: planCharts_,
+    buildFeed: buildFeed_,
+    colLetter: colLetter_,
     monthLabel: monthLabel_,
     nextMonthKey: nextMonthKey_,
     categoryQueryFormula: categoryQueryFormula_,

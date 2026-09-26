@@ -141,16 +141,45 @@ test('collectMonths: только прошлые месяцы, свежие пе
   ]);
 });
 
-test('planHistory: блоки не пересекаются и помещают все категории', () => {
-  const { planHistory } = context.module.exports;
-  const plan = planHistory([{ key: '2026-09', categories: 3 }, { key: '2026-08', categories: 20 }]);
-  assert.strictEqual(plan.tableFirstRow, 5);
-  assert.strictEqual(plan.tableLastRow, 7);
+test('planCharts: блоки месяцев не пересекаются и помещают все категории', () => {
+  const { planCharts } = context.module.exports;
+  const plan = planCharts([{ key: '2026-09', categories: 3 }, { key: '2026-08', categories: 20 }]);
   const [sep, aug] = plan.blocks;
-  assert.ok(sep.row > plan.tableLastRow);
+  assert.ok(sep.row >= 4 + plan.trendRows);
   assert.ok(aug.row >= sep.row + sep.height);
-  assert.ok(aug.height >= 20 + 3);
-  assert.strictEqual(sep.tableRow, 6);
+  assert.ok(aug.height >= 20 + 5);
+  assert.ok(plan.lastRow >= aug.row + aug.height);
+  // много месяцев: таблица трендов не залезает на первый блок
+  const many = planCharts(Array.from({ length: 30 }, (_, i) => ({ key: '2020-01', categories: 2 })));
+  assert.ok(many.blocks[0].row >= 4 + 1 + 30 + 1);
+});
+
+test('buildFeed: лента прошлых месяцев, свежие сверху, с заголовками', () => {
+  const { buildFeed } = context.module.exports;
+  const keyOf = (d) => d.toISOString().slice(0, 7);
+  const d = (s) => new Date(s);
+  const feed = buildFeed(
+    [
+      [d('2026-08-03T10:00:00Z'), 'Magnum', 5400, 'KZT', 'Продукты', 'Kaspi'],
+      [d('2026-10-01T10:00:00Z'), 'Starbucks', 2300, 'KZT', 'Кафе', 'Kaspi'], // текущий месяц — не в ленте
+      [d('2026-09-20T10:00:00Z'), 'Zara', 25000, 'KZT', 'Одежда', 'Freedom'],
+      [d('2026-08-25T10:00:00Z'), 'Wolt', 3000, 'KZT', 'Доставка', 'Kaspi'],
+    ],
+    '2026-10',
+    keyOf
+  );
+  const cells = JSON.parse(JSON.stringify(feed.values.map((r) => (r[2] || r[0])))); // массивы из vm-контекста
+  assert.deepStrictEqual(cells, ['📅 Сентябрь 2026', 'Zara', '', '📅 Август 2026', 'Wolt', 'Magnum']);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(feed.values[1].slice(2))), ['Zara', 'Одежда', 25000, 'KZT', 'Freedom']);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(feed.headers)), [
+    { index: 0, key: '2026-09', first: 1, last: 1 },
+    { index: 3, key: '2026-08', first: 4, last: 5 },
+  ]);
+});
+
+test('colLetter', () => {
+  const { colLetter } = context.module.exports;
+  assert.deepStrictEqual([1, 8, 26, 27, 30].map(colLetter), ['A', 'H', 'Z', 'AA', 'AD']);
 });
 
 // ── Макет Google Таблицы с проверкой границ, чтобы прогнать setup/updateHistory целиком ──
@@ -165,7 +194,7 @@ function colIndex(letters) {
 
 function makeSpreadsheet(txRows) {
   const sheets = [];
-  const log = { formulas: [], triggers: 0 };
+  const log = { formulas: [], triggers: 0, values: {} };
   const ss = {
     getSheetByName: (n) => sheets.find((s) => s.getName() === n) || null,
     getSheets: () => sheets,
@@ -204,9 +233,11 @@ function makeSpreadsheet(txRows) {
         let row = a;
         let col = b;
         if (typeof a === 'string') {
-          const m = a.match(/^([A-Z]+)(\d*)/);
+          const m = a.match(/^([A-Z]+)(\d*)(?::([A-Z]+)(\d*))?$/);
           col = colIndex(m[1]);
           row = Number(m[2] || 1);
+          nc = m[3] ? colIndex(m[3]) - col + 1 : 1;
+          nr = m[4] ? Number(m[4]) - row + 1 : m[3] ? maxRows - row + 1 : 1;
         }
         assert.ok(row + nr - 1 <= maxRows && col + nc - 1 <= maxCols, `${name}: диапазон ${a},${b} вне листа ${maxRows}×${maxCols}`);
         const range = chain({
@@ -214,6 +245,12 @@ function makeSpreadsheet(txRows) {
           getValue: () => (rows[row - 1] || [])[col - 1],
           setFormula: (f) => { log.formulas.push([name, f]); return range; },
           setFormulas: (fs) => { fs.flat().forEach((f) => log.formulas.push([name, f])); return range; },
+          setValues: (vs) => {
+            assert.strictEqual(vs.length, nr, `${name}: setValues — строк ${vs.length}, а диапазон ${nr}`);
+            vs.forEach((r) => assert.strictEqual(r.length, nc, `${name}: setValues — столбцов ${r.length}, а диапазон ${nc}`));
+            (log.values[name] = log.values[name] || []).push(...vs);
+            return range;
+          },
         });
         return range;
       },
@@ -283,15 +320,16 @@ test('updateHistory строит блоки и диаграммы для про�
   ctx.setup();
   const hist = ss.getSheetByName('История');
   const charts = ss.getSheetByName('История (Диаграммы)');
-  assert.strictEqual(hist.charts.length, 2); // сентябрь + август
-  assert.strictEqual(charts.charts.length, 3); // тренд + 2 месяца
-  const histFormulas = log.formulas.filter(([n]) => n === 'История').map(([, f]) => f).join('\n');
-  assert.match(histFormulas, /A >= "&"date '2026-09-01'"&" and A < "&"date '2026-10-01'"/);
-  assert.match(histFormulas, /A >= "&"date '2026-08-01'"&" and A < "&"date '2026-09-01'"/);
-  assert.doesNotMatch(histFormulas, /date '2026-10-01'"&" and A < /); // текущий месяц не в истории
+  assert.strictEqual(hist.charts.length, 0); // в «Истории» только лента покупок
+  assert.strictEqual(charts.charts.length, 3); // тренд + кругляши за сентябрь и август
+  const feedMerchants = log.values['История'].map((r) => r[2]).filter(Boolean);
+  assert.deepStrictEqual(feedMerchants, ['Магазин', 'Zara', 'Wolt', 'Magnum']); // шапка + покупки, без текущего месяца
+  const chartFormulas = log.formulas.filter(([n]) => n === 'История (Диаграммы)').map(([, f]) => f).join('\n');
+  assert.match(chartFormulas, /A >= "&"date '2026-09-01'"&" and A < "&"date '2026-10-01'"/);
+  assert.match(chartFormulas, /A >= "&"date '2026-08-01'"&" and A < "&"date '2026-09-01'"/);
+  assert.doesNotMatch(chartFormulas, /date '2026-10-01'"&" and A < /); // текущий месяц не в истории
 
   // повторный запуск не плодит диаграммы
   ctx.updateHistory();
-  assert.strictEqual(hist.charts.length, 2);
   assert.strictEqual(charts.charts.length, 3);
 });
