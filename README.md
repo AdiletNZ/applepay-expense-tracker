@@ -102,9 +102,10 @@ Save it somewhere (for example in Notes). You will paste it in **two** places: t
    - **Review permissions** → pick your Google account
    - You'll see **"Google hasn't verified this app"** → click **Advanced** → **Go to … (unsafe)**
    - Click **Allow**
-4. Go back to your spreadsheet tab. You should now see 4 tabs at the bottom: **Итоги, Операции, Категории, Правила** (Summary, Transactions, Categories, Rules; see [what each tab does](#how-the-spreadsheet-works)).
+   (Google also asks to let the script **run on a schedule**. That's the nightly history update.)
+4. Go back to your spreadsheet tab. You should now see 6 tabs at the bottom: **Итоги, Операции, Категории, Правила, История, История (Диаграммы)** (see [what each tab does](#how-the-spreadsheet-works)), and a new **💳 Трекер** menu at the top (reload the page if you don't see it).
 
-**Optional test:** choose **`testTransaction`** in the dropdown (second in the list) and click **▶ Run**. A test row "Magnum Cash&Carry, 5 400" appears in the **Операции** tab. Delete that row afterwards (right-click the row number → Delete row).
+**Optional test:** choose **`testTransaction`** in the dropdown and click **▶ Run**. A test row "Magnum Cash&Carry, 5 400" appears in the **Операции** tab. Delete that row afterwards (right-click the row number → Delete row).
 
 ### A4. Publish it as a web app
 
@@ -268,14 +269,18 @@ This creates an automation that runs by itself after every Apple Pay payment.
 
 ## How the spreadsheet works
 
-The script creates 4 tabs. Their names are in Russian:
+The script creates 6 tabs. Their names are in Russian:
 
 | Tab | Meaning | What's inside |
 |---|---|---|
-| **Операции** | Transactions | Every purchase, one row each: date, shop, amount, currency, category, card |
-| **Итоги** | Summary | Total for the month, spending per category, a pie chart, and totals per month |
+| **Итоги** | Summary | **Current month only**: total, spending per category with %, and a pie chart. Switches to the new month by itself on the 1st. |
+| **Операции** | Transactions | Every purchase ever, one row each: date, shop, amount, currency, category, card |
 | **Категории** | Categories | Which words in a shop name belong to which category. You can edit this. |
 | **Правила** | Rules | Shops you re-categorized by hand. Filled in automatically. |
+| **История** | History | Past months, **newest on top**: a "per month" totals table, then each month's categories with a pie chart next to it |
+| **История (Диаграммы)** | History (charts) | **Charts only**, two per row, to scroll through: first a "spending per month" bar chart, next to it last month, then older months |
+
+All purchases stay in one list on **Операции**; the other tabs are calculated from it. The history tabs are rebuilt automatically **every night**, or instantly via **💳 Трекер → 🔄 Обновить историю** (Update history). The numbers are live formulas, so if you fix the category of an old purchase, that month's history updates too.
 
 **How a category is chosen:**
 1. If the shop is on the **Правила** (Rules) tab, use that category.
@@ -286,8 +291,8 @@ Built-in categories include: Groceries, Cafés & restaurants, Food delivery, Tax
 
 **Everyday use:**
 - **Wrong category?** On the **Операции** tab, pick another one from the dropdown in the category column. The sheet remembers this shop and updates all its past and future purchases. You can also type a brand-new category name.
-- **See another month:** on the **Итоги** tab, double-click cell **B1** and pick any day in that month. To go back to the current month, type `=TODAY()`.
-- **Another currency:** type it in **B2** on the **Итоги** tab (`KZT`, `USD`, `EUR`…). Each currency is totalled separately.
+- **See a past month:** open **История** (numbers + chart) or **История (Диаграммы)** (just charts).
+- **Another currency:** type it in **B2** on the **Итоги** tab (`KZT`, `USD`, `EUR`…). Summary and history are calculated for that currency.
 - **Add your own shops:** add keywords (comma-separated) on the **Категории** tab.
 - **Add a purchase by hand** (cash, bank transfer, QR payments): just type a new row on the **Операции** tab.
 
@@ -318,6 +323,15 @@ Built-in categories include: Groceries, Cafés & restaurants, Food delivery, Tax
 | Empty notification | Open the shortcut and check the **Get Dictionary Value** key is exactly `message`. |
 
 **Changed the script code?** Changes only go live after you update the deployment: **Deploy → Manage deployments → ✏️ (edit) → Version: New version → Deploy**. The URL stays the same.
+
+### Updating to a new version of the script
+
+1. Copy the new [Code.gs](https://raw.githubusercontent.com/AdiletNZ/applepay-expense-tracker/main/google-sheets/Code.gs) into the Apps Script editor, replacing everything.
+2. Put your token back into the `TOKEN` line and save.
+3. Choose **`setup`** in the function dropdown → **▶ Run** (allow new permissions if asked). Your purchases, categories and rules are kept; the Summary and History tabs are rebuilt.
+4. Update the deployment: **Deploy → Manage deployments → ✏️ → Version: New version → Deploy**. **Don't** use "New deployment", which would give you a new URL.
+
+Your iPhone automation doesn't need any changes.
 
 ---
 

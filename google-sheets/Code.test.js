@@ -120,3 +120,178 @@ test('ручная смена категории запоминается', () =
   assert.strictEqual(sheets['Правила'].rows.length, 2); // правило обновилось, а не задублировалось
   assert.strictEqual(sheets['Правила'].rows[1][1], 'Подарки');
 });
+
+// ── История: чистая логика ──
+test('monthLabel / nextMonthKey', () => {
+  const { monthLabel, nextMonthKey } = context.module.exports;
+  assert.strictEqual(monthLabel('2026-08'), 'Август 2026');
+  assert.strictEqual(nextMonthKey('2026-08'), '2026-09');
+  assert.strictEqual(nextMonthKey('2026-12'), '2027-01');
+});
+
+test('collectMonths: только прошлые месяцы, свежие первыми', () => {
+  const { collectMonths } = context.module.exports;
+  const months = collectMonths(
+    [['2026-08', 'Продукты'], ['2026-10', 'Кафе'], ['2026-09', 'Кафе'], ['2026-08', 'Такси'], ['2026-08', 'Продукты']],
+    '2026-10'
+  );
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(months)), [
+    { key: '2026-09', categories: 1 },
+    { key: '2026-08', categories: 2 },
+  ]);
+});
+
+test('planHistory: блоки не пересекаются и помещают все категории', () => {
+  const { planHistory } = context.module.exports;
+  const plan = planHistory([{ key: '2026-09', categories: 3 }, { key: '2026-08', categories: 20 }]);
+  assert.strictEqual(plan.tableFirstRow, 5);
+  assert.strictEqual(plan.tableLastRow, 7);
+  const [sep, aug] = plan.blocks;
+  assert.ok(sep.row > plan.tableLastRow);
+  assert.ok(aug.row >= sep.row + sep.height);
+  assert.ok(aug.height >= 20 + 3);
+  assert.strictEqual(sep.tableRow, 6);
+});
+
+// ── Макет Google Таблицы с проверкой границ, чтобы прогнать setup/updateHistory целиком ──
+function chain(extra = {}) {
+  const p = new Proxy(extra, { get: (t, k) => (k in t ? t[k] : () => p) });
+  return p;
+}
+
+function colIndex(letters) {
+  return letters.split('').reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0);
+}
+
+function makeSpreadsheet(txRows) {
+  const sheets = [];
+  const log = { formulas: [], triggers: 0 };
+  const ss = {
+    getSheetByName: (n) => sheets.find((s) => s.getName() === n) || null,
+    getSheets: () => sheets,
+    getNumSheets: () => sheets.length,
+    insertSheet: (name, idx) => {
+      const s = makeSheet(name);
+      sheets.splice(idx === undefined ? sheets.length : idx, 0, s);
+      return s;
+    },
+    setSpreadsheetTimeZone: () => {},
+    setActiveSheet: (s) => s,
+  };
+  function makeSheet(name, rows = []) {
+    let maxRows = 1000;
+    let maxCols = 26;
+    const charts = [];
+    const sheet = {
+      rows,
+      charts,
+      getName: () => name,
+      setName: (n) => { name = n; return sheet; },
+      getParent: () => ss,
+      getLastRow: () => rows.length,
+      getMaxRows: () => maxRows,
+      getMaxColumns: () => maxCols,
+      insertRowsAfter: (_, n) => { maxRows += n; },
+      insertColumnsAfter: (_, n) => { maxCols += n; },
+      hideColumns: (c, n = 1) => { assert.ok(c + n - 1 <= maxCols, `${name}: hideColumns вне листа`); },
+      showColumns: () => {},
+      getCharts: () => charts.slice(),
+      removeChart: (c) => charts.splice(charts.indexOf(c), 1),
+      insertChart: (c) => charts.push(c),
+      newChart: () => chain({ build: () => ({}) }),
+      appendRow: (r) => rows.push(r),
+      getRange: (a, b, nr = 1, nc = 1) => {
+        let row = a;
+        let col = b;
+        if (typeof a === 'string') {
+          const m = a.match(/^([A-Z]+)(\d*)/);
+          col = colIndex(m[1]);
+          row = Number(m[2] || 1);
+        }
+        assert.ok(row + nr - 1 <= maxRows && col + nc - 1 <= maxCols, `${name}: диапазон ${a},${b} вне листа ${maxRows}×${maxCols}`);
+        const range = chain({
+          getValues: () => rows.slice(row - 1, row - 1 + nr).map((r) => r.slice(col - 1, col - 1 + nc)),
+          getValue: () => (rows[row - 1] || [])[col - 1],
+          setFormula: (f) => { log.formulas.push([name, f]); return range; },
+          setFormulas: (fs) => { fs.flat().forEach((f) => log.formulas.push([name, f])); return range; },
+        });
+        return range;
+      },
+    };
+    [
+      'clear', 'clearNotes', 'setColumnWidth', 'setFrozenRows',
+    ].forEach((m) => { sheet[m] = () => sheet; });
+    return sheet;
+  }
+  const first = makeSheet('Лист1');
+  sheets.push(first);
+  if (txRows) {
+    first.setName('Операции');
+    first.rows.push(['Дата', 'Магазин', 'Сумма', 'Валюта', 'Категория', 'Карта'], ...txRows);
+  }
+  return { ss, log };
+}
+
+function loadWithSpreadsheet(ss, log, now) {
+  class FakeDate extends Date {
+    constructor(...args) { if (args.length) super(...args); else super(now); }
+  }
+  const ctx = {
+    module: { exports: {} },
+    Date: FakeDate,
+    SpreadsheetApp: {
+      getActiveSpreadsheet: () => ss,
+      newDataValidation: () => chain(),
+      flush: () => {},
+    },
+    Charts: { ChartType: { PIE: 'PIE', COLUMN: 'COLUMN' } },
+    Utilities: {
+      formatDate: (d, tz) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit' })
+        .format(d).slice(0, 7),
+    },
+    ScriptApp: {
+      getProjectTriggers: () => [],
+      newTrigger: () => chain({ create: () => { log.triggers += 1; } }),
+    },
+    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'Code.gs'), 'utf8'), ctx);
+  return ctx;
+}
+
+test('setup на пустой таблице создаёт все листы', () => {
+  const { ss, log } = makeSpreadsheet();
+  const ctx = loadWithSpreadsheet(ss, log, '2026-10-15T10:00:00+05:00');
+  ctx.setup();
+  assert.deepStrictEqual(ss.getSheets().map((s) => s.getName()),
+    ['Итоги', 'Операции', 'Категории', 'Правила', 'История', 'История (Диаграммы)']);
+  assert.strictEqual(log.triggers, 1);
+  // без прошлых месяцев: только диаграмма трендов
+  assert.strictEqual(ss.getSheetByName('История (Диаграммы)').charts.length, 1);
+  assert.strictEqual(ss.getSheetByName('Итоги').charts.length, 1);
+});
+
+test('updateHistory строит блоки и диаграммы для прошлых месяцев', () => {
+  const d = (s) => new Date(s);
+  const { ss, log } = makeSpreadsheet([
+    [d('2026-08-03T12:00:00+05:00'), 'Magnum', 5400, 'KZT', 'Продукты', ''],
+    [d('2026-08-31T23:30:00+05:00'), 'Wolt', 3000, 'KZT', 'Доставка еды', ''], // ещё август по Алматы
+    [d('2026-09-10T12:00:00+05:00'), 'Zara', 25000, 'KZT', 'Одежда и покупки', ''],
+    [d('2026-10-01T09:00:00+05:00'), 'Starbucks', 2300, 'KZT', 'Кафе и рестораны', ''], // текущий
+  ]);
+  const ctx = loadWithSpreadsheet(ss, log, '2026-10-15T10:00:00+05:00');
+  ctx.setup();
+  const hist = ss.getSheetByName('История');
+  const charts = ss.getSheetByName('История (Диаграммы)');
+  assert.strictEqual(hist.charts.length, 2); // сентябрь + август
+  assert.strictEqual(charts.charts.length, 3); // тренд + 2 месяца
+  const histFormulas = log.formulas.filter(([n]) => n === 'История').map(([, f]) => f).join('\n');
+  assert.match(histFormulas, /A >= "&"date '2026-09-01'"&" and A < "&"date '2026-10-01'"/);
+  assert.match(histFormulas, /A >= "&"date '2026-08-01'"&" and A < "&"date '2026-09-01'"/);
+  assert.doesNotMatch(histFormulas, /date '2026-10-01'"&" and A < /); // текущий месяц не в истории
+
+  // повторный запуск не плодит диаграммы
+  ctx.updateHistory();
+  assert.strictEqual(hist.charts.length, 2);
+  assert.strictEqual(charts.charts.length, 3);
+});
