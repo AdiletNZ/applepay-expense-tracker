@@ -82,6 +82,7 @@ function loadWithSheets() {
   Object.values(sheets).forEach((s) => { s.getParent = () => ss; });
   const ctx = {
     module: { exports: {} },
+    console: { error() {} }, // история в этом макете не строится — safeRefresh_ глотает ошибку
     SpreadsheetApp: { getActiveSpreadsheet: () => ss },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     ContentService: {
@@ -112,11 +113,11 @@ test('ручная смена категории запоминается', () =
   post({ token: 'secret', merchant: 'ИП Ахметов', amount: '2000' });
   post({ token: 'secret', merchant: 'ип  ахметов', amount: '1000' });
   const tx = sheets['Операции'];
-  ctx.onEdit({ range: tx.getRange(2, 5), value: 'Хозтовары' });
+  ctx.onTableEdit({ range: tx.getRange(2, 5), value: 'Хозтовары' });
   assert.deepStrictEqual(sheets['Правила'].rows[1], ['ИП Ахметов', 'Хозтовары']);
   assert.strictEqual(tx.rows[2][4], 'Хозтовары'); // прошлая покупка тоже обновилась
   assert.strictEqual(post({ token: 'secret', merchant: 'ИП АХМЕТОВ', amount: '1' }).category, 'Хозтовары');
-  ctx.onEdit({ range: tx.getRange(2, 5), value: 'Подарки' });
+  ctx.onTableEdit({ range: tx.getRange(2, 5), value: 'Подарки' });
   assert.strictEqual(sheets['Правила'].rows.length, 2); // правило обновилось, а не задублировалось
   assert.strictEqual(sheets['Правила'].rows[1][1], 'Подарки');
 });
@@ -129,13 +130,13 @@ test('monthLabel / nextMonthKey', () => {
   assert.strictEqual(nextMonthKey('2026-12'), '2027-01');
 });
 
-test('collectMonths: только прошлые месяцы, свежие первыми', () => {
+test('collectMonths: все месяцы, свежие первыми', () => {
   const { collectMonths } = context.module.exports;
   const months = collectMonths(
-    [['2026-08', 'Продукты'], ['2026-10', 'Кафе'], ['2026-09', 'Кафе'], ['2026-08', 'Такси'], ['2026-08', 'Продукты']],
-    '2026-10'
+    [['2026-08', 'Продукты'], ['2026-10', 'Кафе'], ['2026-09', 'Кафе'], ['2026-08', 'Такси'], ['2026-08', 'Продукты']]
   );
   assert.deepStrictEqual(JSON.parse(JSON.stringify(months)), [
+    { key: '2026-10', categories: 1 },
     { key: '2026-09', categories: 1 },
     { key: '2026-08', categories: 2 },
   ]);
@@ -145,35 +146,34 @@ test('planCharts: блоки месяцев не пересекаются и п�
   const { planCharts } = context.module.exports;
   const plan = planCharts([{ key: '2026-09', categories: 3 }, { key: '2026-08', categories: 20 }]);
   const [sep, aug] = plan.blocks;
-  assert.ok(sep.row >= 4 + plan.trendRows);
+  assert.strictEqual(sep.row, 4);
   assert.ok(aug.row >= sep.row + sep.height);
   assert.ok(aug.height >= 20 + 5);
   assert.ok(plan.lastRow >= aug.row + aug.height);
-  // много месяцев: таблица трендов не залезает на первый блок
-  const many = planCharts(Array.from({ length: 30 }, (_, i) => ({ key: '2020-01', categories: 2 })));
-  assert.ok(many.blocks[0].row >= 4 + 1 + 30 + 1);
 });
 
-test('buildFeed: лента прошлых месяцев, свежие сверху, с заголовками', () => {
+test('buildFeed: лента всех покупок, свежие сверху, с заголовками месяцев', () => {
   const { buildFeed } = context.module.exports;
   const keyOf = (d) => d.toISOString().slice(0, 7);
   const d = (s) => new Date(s);
   const feed = buildFeed(
     [
       [d('2026-08-03T10:00:00Z'), 'Magnum', 5400, 'KZT', 'Продукты', 'Kaspi'],
-      [d('2026-10-01T10:00:00Z'), 'Starbucks', 2300, 'KZT', 'Кафе', 'Kaspi'], // текущий месяц — не в ленте
+      [d('2026-10-01T10:00:00Z'), 'Starbucks', 2300, 'KZT', 'Кафе', 'Kaspi'],
       [d('2026-09-20T10:00:00Z'), 'Zara', 25000, 'KZT', 'Одежда', 'Freedom'],
       [d('2026-08-25T10:00:00Z'), 'Wolt', 3000, 'KZT', 'Доставка', 'Kaspi'],
     ],
-    '2026-10',
     keyOf
   );
   const cells = JSON.parse(JSON.stringify(feed.values.map((r) => (r[2] || r[0])))); // массивы из vm-контекста
-  assert.deepStrictEqual(cells, ['📅 Сентябрь 2026', 'Zara', '', '📅 Август 2026', 'Wolt', 'Magnum']);
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(feed.values[1].slice(2))), ['Zara', 'Одежда', 25000, 'KZT', 'Freedom']);
+  assert.deepStrictEqual(cells, [
+    '📅 Октябрь 2026', 'Starbucks', '', '📅 Сентябрь 2026', 'Zara', '', '📅 Август 2026', 'Wolt', 'Magnum',
+  ]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(feed.values[4].slice(2))), ['Zara', 'Одежда', 25000, 'KZT', 'Freedom']);
   assert.deepStrictEqual(JSON.parse(JSON.stringify(feed.headers)), [
-    { index: 0, key: '2026-09', first: 1, last: 1 },
-    { index: 3, key: '2026-08', first: 4, last: 5 },
+    { index: 0, key: '2026-10', first: 1, last: 1 },
+    { index: 3, key: '2026-09', first: 4, last: 4 },
+    { index: 6, key: '2026-08', first: 7, last: 8 },
   ]);
 });
 
@@ -194,7 +194,7 @@ function colIndex(letters) {
 
 function makeSpreadsheet(txRows) {
   const sheets = [];
-  const log = { formulas: [], triggers: 0, values: {} };
+  const log = { formulas: [], triggers: 0, values: {}, chartInserts: {} };
   const ss = {
     getSheetByName: (n) => sheets.find((s) => s.getName() === n) || null,
     getSheets: () => sheets,
@@ -226,7 +226,7 @@ function makeSpreadsheet(txRows) {
       showColumns: () => {},
       getCharts: () => charts.slice(),
       removeChart: (c) => charts.splice(charts.indexOf(c), 1),
-      insertChart: (c) => charts.push(c),
+      insertChart: (c) => { charts.push(c); log.chartInserts[name] = (log.chartInserts[name] || 0) + 1; },
       newChart: () => chain({ build: () => ({}) }),
       appendRow: (r) => rows.push(r),
       getRange: (a, b, nr = 1, nc = 1) => {
@@ -249,6 +249,10 @@ function makeSpreadsheet(txRows) {
             assert.strictEqual(vs.length, nr, `${name}: setValues — строк ${vs.length}, а диапазон ${nr}`);
             vs.forEach((r) => assert.strictEqual(r.length, nc, `${name}: setValues — столбцов ${r.length}, а диапазон ${nc}`));
             (log.values[name] = log.values[name] || []).push(...vs);
+            vs.forEach((r, i) => r.forEach((v, j) => {
+              while (rows.length < row + i) rows.push([]);
+              rows[row - 1 + i][col - 1 + j] = v;
+            }));
             return range;
           },
         });
@@ -270,6 +274,7 @@ function makeSpreadsheet(txRows) {
 }
 
 function loadWithSpreadsheet(ss, log, now) {
+  const props = {};
   class FakeDate extends Date {
     constructor(...args) { if (args.length) super(...args); else super(now); }
   }
@@ -291,8 +296,17 @@ function loadWithSpreadsheet(ss, log, now) {
       newTrigger: () => chain({ create: () => { log.triggers += 1; } }),
     },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    PropertiesService: {
+      getDocumentProperties: () => ({ getProperty: (k) => props[k] || null, setProperty: (k, v) => { props[k] = v; } }),
+    },
+    ContentService: {
+      MimeType: { JSON: 'json' },
+      createTextOutput: (text) => ({ text, setMimeType() { return this; } }),
+    },
+    console: { error: (m) => { throw new Error(m); } }, // в полном макете история обязана строиться без ошибок
   };
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'Code.gs'), 'utf8'), ctx);
+  const src = fs.readFileSync(path.join(__dirname, 'Code.gs'), 'utf8').replace("'ВСТАВЬ_СВОЙ_ТОКЕН';", "'secret';");
+  vm.runInNewContext(src, ctx);
   return ctx;
 }
 
@@ -302,13 +316,12 @@ test('setup на пустой таблице создаёт все листы', 
   ctx.setup();
   assert.deepStrictEqual(ss.getSheets().map((s) => s.getName()),
     ['Итоги', 'Операции', 'Категории', 'Правила', 'История', 'История (Диаграммы)']);
-  assert.strictEqual(log.triggers, 1);
-  // без прошлых месяцев: только диаграмма трендов
-  assert.strictEqual(ss.getSheetByName('История (Диаграммы)').charts.length, 1);
+  assert.strictEqual(log.triggers, 3); // ночное обновление + правки + изменения структуры
+  assert.strictEqual(ss.getSheetByName('История (Диаграммы)').charts.length, 0); // покупок нет — кругляшей нет
   assert.strictEqual(ss.getSheetByName('Итоги').charts.length, 1);
 });
 
-test('updateHistory строит блоки и диаграммы для прошлых месяцев', () => {
+test('updateHistory: лента всех покупок и кругляш на каждый месяц', () => {
   const d = (s) => new Date(s);
   const { ss, log } = makeSpreadsheet([
     [d('2026-08-03T12:00:00+05:00'), 'Magnum', 5400, 'KZT', 'Продукты', ''],
@@ -321,15 +334,37 @@ test('updateHistory строит блоки и диаграммы для про�
   const hist = ss.getSheetByName('История');
   const charts = ss.getSheetByName('История (Диаграммы)');
   assert.strictEqual(hist.charts.length, 0); // в «Истории» только лента покупок
-  assert.strictEqual(charts.charts.length, 3); // тренд + кругляши за сентябрь и август
+  assert.strictEqual(charts.charts.length, 3); // кругляши за октябрь, сентябрь, август
   const feedMerchants = log.values['История'].map((r) => r[2]).filter(Boolean);
-  assert.deepStrictEqual(feedMerchants, ['Магазин', 'Zara', 'Wolt', 'Magnum']); // шапка + покупки, без текущего месяца
+  assert.deepStrictEqual(feedMerchants, ['Магазин', 'Starbucks', 'Zara', 'Wolt', 'Magnum']);
   const chartFormulas = log.formulas.filter(([n]) => n === 'История (Диаграммы)').map(([, f]) => f).join('\n');
   assert.match(chartFormulas, /A >= "&"date '2026-09-01'"&" and A < "&"date '2026-10-01'"/);
   assert.match(chartFormulas, /A >= "&"date '2026-08-01'"&" and A < "&"date '2026-09-01'"/);
-  assert.doesNotMatch(chartFormulas, /date '2026-10-01'"&" and A < /); // текущий месяц не в истории
+  assert.match(chartFormulas, /A >= "&"date '2026-10-01'"&" and A < "&"date '2026-11-01'"/);
 
   // повторный запуск не плодит диаграммы
   ctx.updateHistory();
   assert.strictEqual(charts.charts.length, 3);
+});
+
+test('покупка через doPost сразу попадает в «Историю», кругляши пересобираются только при новом месяце', () => {
+  const { ss, log } = makeSpreadsheet();
+  const ctx = loadWithSpreadsheet(ss, log, '2026-10-15T10:00:00+05:00');
+  ctx.setup();
+  const post = (body) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify({ token: 'secret', ...body }) } }).text);
+  const charts = ss.getSheetByName('История (Диаграммы)');
+  const feed = () => log.values['История'].slice(-10).map((r) => r[2]).filter(Boolean);
+
+  assert.strictEqual(post({ merchant: 'Magnum', amount: '5 400 ₸' }).ok, true);
+  assert.ok(feed().includes('Magnum'));
+  assert.strictEqual(charts.charts.length, 1); // появился кругляш за октябрь
+  const inserts = log.chartInserts['История (Диаграммы)'];
+
+  assert.strictEqual(post({ merchant: 'Small', amount: '1 200 ₸' }).ok, true); // тот же месяц и категория
+  assert.ok(feed().includes('Small'));
+  assert.strictEqual(log.chartInserts['История (Диаграммы)'], inserts); // формулы живые — лист не пересобирался
+
+  assert.strictEqual(post({ merchant: 'Starbucks', amount: '2 000 ₸' }).ok, true); // новая категория
+  assert.strictEqual(log.chartInserts['История (Диаграммы)'], inserts + 1); // блок расширен под неё
+  assert.strictEqual(charts.charts.length, 1);
 });

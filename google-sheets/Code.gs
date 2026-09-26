@@ -75,29 +75,19 @@ function setup() {
   tx.getRange('E2:E').setDataValidation(catRule);
 
   buildSummary_(ss);
-  installDailyTrigger_();
+  installTriggers_(ss);
   updateHistory();
   ss.setActiveSheet(ss.getSheetByName(SHEETS.summary));
   SpreadsheetApp.flush();
 }
 
 /**
- * Пересобирает листы «История» (лента покупок прошлых месяцев) и
- * «История (Диаграммы)» (кругляш и итог за каждый прошлый месяц) из листа «Операции».
- * Запускается сам каждую ночь, вручную — меню «💳 Трекер → Обновить историю».
+ * Полностью пересобирает «История» и «История (Диаграммы)».
+ * Обычно не нужна: история обновляется сама после каждой покупки и правки.
+ * Запускается каждую ночь как страховка и из меню «💳 Трекер → Обновить историю».
  */
 function updateHistory() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const tx = sheet_(ss, SHEETS.tx);
-  const rows = tx.getLastRow() > 1 ? tx.getRange(2, 1, tx.getLastRow() - 1, TX_HEADERS.length).getValues() : [];
-  const keyOf = (d) => Utilities.formatDate(d, TIMEZONE, 'yyyy-MM');
-  const currentKey = keyOf(new Date());
-  const dated = rows.filter((r) => r[0] && typeof r[0].getTime === 'function');
-  const months = collectMonths_(dated.map((r) => [keyOf(r[0]), r[COL.category - 1]]), currentKey);
-
-  buildHistorySheet_(resetSheet_(ss, SHEETS.history), buildFeed_(dated, currentKey, keyOf));
-  buildHistoryChartsSheet_(resetSheet_(ss, SHEETS.historyCharts), planCharts_(months), currentKey);
-  SpreadsheetApp.flush();
+  refreshHistory_(SpreadsheetApp.getActiveSpreadsheet(), true);
 }
 
 /** Проверка без iPhone: добавляет тестовую покупку. Потом удали строку. */
@@ -108,6 +98,20 @@ function testTransaction() {
     card: 'Тест',
   });
   Logger.log(result.message);
+}
+
+/** Триггер «при изменении» (ставит setup): запоминает категорию и обновляет историю. */
+function onTableEdit(e) {
+  const sheet = e.range.getSheet();
+  if (sheet.getName() !== SHEETS.tx) return;
+  learnCategory_(e);
+  safeRefresh_(sheet.getParent());
+}
+
+/** Триггер «при изменении структуры» (ставит setup): удалили/вставили строки и т.п. */
+function onTableChange(e) {
+  if (e && e.changeType === 'EDIT') return; // правки ячеек обрабатывает onTableEdit
+  safeRefresh_(SpreadsheetApp.getActiveSpreadsheet());
 }
 
 
@@ -199,7 +203,9 @@ function doPost(e) {
     const token = body.token || (e && e.parameter && e.parameter.token);
     if (TOKEN === 'ВСТАВЬ_СВОЙ_ТОКЕН') throw new Error('Впиши свой токен в начало скрипта (константа TOKEN)');
     if (token !== TOKEN) return json_({ ok: false, error: 'Неверный токен' });
-    const result = addTransaction_(SpreadsheetApp.getActiveSpreadsheet(), body);
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const result = addTransaction_(ss, body);
+    safeRefresh_(ss);
     return json_(Object.assign({ ok: true }, result));
   } catch (err) {
     return json_({ ok: false, error: String((err && err.message) || err) });
@@ -279,7 +285,7 @@ function sheet_(ss, name) {
  * Поменял категорию у покупки на листе «Операции» → магазин запоминается
  * на листе «Правила», а все его покупки получают эту категорию.
  */
-function onEdit(e) {
+function learnCategory_(e) {
   const range = e.range;
   const sheet = range.getSheet();
   if (sheet.getName() !== SHEETS.tx || range.getColumn() !== COL.category || range.getRow() < 2) return;
@@ -315,11 +321,46 @@ function onOpen() {
     .addToUi();
 }
 
-function installDailyTrigger_() {
-  const exists = ScriptApp.getProjectTriggers().some((t) => t.getHandlerFunction() === 'updateHistory');
-  if (!exists) {
+function installTriggers_(ss) {
+  const handlers = ScriptApp.getProjectTriggers().map((t) => t.getHandlerFunction());
+  if (!handlers.includes('updateHistory')) {
     ScriptApp.newTrigger('updateHistory').timeBased().everyDays(1).atHour(3).inTimezone(TIMEZONE).create();
   }
+  if (!handlers.includes('onTableEdit')) ScriptApp.newTrigger('onTableEdit').forSpreadsheet(ss).onEdit().create();
+  if (!handlers.includes('onTableChange')) ScriptApp.newTrigger('onTableChange').forSpreadsheet(ss).onChange().create();
+}
+
+/** Обновляет историю, но никогда не ломает основное действие (покупку, правку). */
+function safeRefresh_(ss) {
+  try {
+    refreshHistory_(ss, false);
+  } catch (err) {
+    console.error('Не удалось обновить историю: ' + ((err && err.stack) || err));
+  }
+}
+
+/**
+ * Лента «История» пересобирается всегда (это быстро). Кругляши в «Истории (Диаграммы)»
+ * считаются формулами, поэтому их лист пересобирается, только когда появился новый месяц
+ * или категория (или force).
+ */
+function refreshHistory_(ss, force) {
+  const tx = sheet_(ss, SHEETS.tx);
+  const rows = tx.getLastRow() > 1 ? tx.getRange(2, 1, tx.getLastRow() - 1, TX_HEADERS.length).getValues() : [];
+  const keyOf = (d) => Utilities.formatDate(d, TIMEZONE, 'yyyy-MM');
+  const currentKey = keyOf(new Date());
+  const dated = rows.filter((r) => r[0] && typeof r[0].getTime === 'function');
+
+  buildHistorySheet_(resetSheet_(ss, SHEETS.history), buildFeed_(dated, keyOf));
+
+  const months = collectMonths_(dated.map((r) => [keyOf(r[0]), r[COL.category - 1]]));
+  const layout = JSON.stringify([currentKey, months]);
+  const props = PropertiesService.getDocumentProperties();
+  if (force || !ss.getSheetByName(SHEETS.historyCharts) || props.getProperty('chartsLayout') !== layout) {
+    buildHistoryChartsSheet_(resetSheet_(ss, SHEETS.historyCharts), planCharts_(months), currentKey);
+    props.setProperty('chartsLayout', layout);
+  }
+  SpreadsheetApp.flush();
 }
 
 // ──────────────────────── Итоги и история: разметка ────────────────────────
@@ -343,13 +384,12 @@ function nextMonthKey_(key) {
 }
 
 /**
- * entries: [["2026-08", "Продукты"], ...] → прошлые месяцы (без текущего), свежие первыми:
+ * entries: [["2026-08", "Продукты"], ...] → все месяцы, свежие первыми:
  * [{ key: "2026-08", categories: 5 }, ...]
  */
-function collectMonths_(entries, currentKey) {
+function collectMonths_(entries) {
   const byMonth = {};
   entries.forEach(([key, category]) => {
-    if (key >= currentKey) return;
     (byMonth[key] = byMonth[key] || {})[String(category)] = true;
   });
   return Object.keys(byMonth)
@@ -358,13 +398,9 @@ function collectMonths_(entries, currentKey) {
     .map((key) => ({ key: key, categories: Object.keys(byMonth[key]).length }));
 }
 
-/**
- * Раскладка листа «История (Диаграммы)»: сверху «Траты по месяцам» (диаграмма + таблица),
- * ниже — блок на каждый прошлый месяц: кругляш слева, итог и категории справа.
- */
+/** Раскладка листа «История (Диаграммы)»: блок на каждый месяц, кругляш слева, итог и категории справа. */
 function planCharts_(months) {
-  const trendRows = Math.max(CHARTS.minBlockRows, months.length + 2);
-  let row = CHARTS.firstRow + trendRows + CHARTS.gapRows;
+  let row = CHARTS.firstRow;
   const blocks = months.map((m) => {
     // заголовок, «всего», пустая строка, шапка таблицы, категории + запас на новые
     const height = Math.max(m.categories + 6, CHARTS.minBlockRows);
@@ -372,18 +408,16 @@ function planCharts_(months) {
     row += height + CHARTS.gapRows;
     return block;
   });
-  return { trendRows: trendRows, blocks: blocks, lastRow: row };
+  return { blocks: blocks, lastRow: row };
 }
 
 /**
- * Лента покупок прошлых месяцев, как история в банковском приложении:
+ * Лента всех покупок, как история в банковском приложении:
  * свежие сверху, по месяцам, у каждого месяца строка-заголовок.
  * Возвращает строки для листа и где стоят заголовки месяцев (индексы от 0).
  */
-function buildFeed_(rows, currentKey, keyOf) {
-  const past = rows
-    .filter((r) => keyOf(r[0]) < currentKey)
-    .sort((a, b) => b[0].getTime() - a[0].getTime());
+function buildFeed_(rows, keyOf) {
+  const past = rows.slice().sort((a, b) => b[0].getTime() - a[0].getTime());
   const values = [];
   const headers = [];
   let lastKey = null;
@@ -452,15 +486,13 @@ function buildSummary_(ss) {
   return sum;
 }
 
-/** Лист «История»: все покупки прошлых месяцев лентой, свежие сверху. */
+/** Лист «История»: все покупки лентой, свежие сверху. */
 function buildHistorySheet_(sheet, feed) {
   const top = FEED.headerRow + 1;
   ensureSize_(sheet, top + feed.values.length + 1, FEED.columns.length);
   sheet.getRange('A1').setValue('История покупок').setFontWeight('bold').setFontSize(16);
   sheet.getRange('A2')
-    .setValue(feed.values.length
-      ? 'Прошлые месяцы, свежие сверху. Покупки текущего месяца — на листе «Операции». Категорию меняй там же.'
-      : 'Прошлых месяцев пока нет — покупки текущего месяца на листе «Операции», сюда они попадут 1-го числа.')
+    .setValue('Все покупки, свежие сверху. Обновляется сама после каждой покупки. Категорию меняй на листе «Операции».')
     .setFontColor('#6e6e73')
     .setFontStyle('italic');
   sheet.getRange(FEED.headerRow, 1, 1, FEED.columns.length).setValues([FEED.columns])
@@ -486,48 +518,27 @@ function buildHistorySheet_(sheet, feed) {
 }
 
 /**
- * Лист «История (Диаграммы)»: для каждого прошлого месяца тот же кругляш, что был в «Итогах»,
+ * Лист «История (Диаграммы)»: для каждого месяца такой же кругляш, как в «Итогах»,
  * а справа — сколько всего ушло и разбивка по категориям. Свежие месяцы сверху.
  */
 function buildHistoryChartsSheet_(sheet, plan, currentKey) {
   const t = CHARTS.tableCol;
+  const H = colLetter_(t + 1);
   ensureSize_(sheet, plan.lastRow + 1, t + 3);
   sheet.getRange('A1').setValue('История (Диаграммы)').setFontWeight('bold').setFontSize(16);
   sheet.getRange('A2')
     .setValue(plan.blocks.length
-      ? 'Куда уходили деньги в прошлые месяцы. Листай вниз: свежие месяцы сверху.'
-      : 'Прошлых месяцев пока нет — кругляш за этот месяц появится здесь 1-го числа следующего.')
+      ? 'Куда уходили деньги по месяцам. Свежие сверху, листай вниз. Обновляется сама.'
+      : 'Покупок пока нет — кругляш появится после первой покупки.')
     .setFontColor('#6e6e73')
     .setFontStyle('italic');
   sheet.setColumnWidth(t, 200).setColumnWidth(t + 1, 120).setColumnWidth(t + 2, 60).setColumnWidth(t + 3, 60);
 
-  // «Траты по месяцам»: таблица справа, столбики слева
-  const r0 = CHARTS.firstRow;
-  sheet.getRange(r0, t, 1, 2).setValues([['Месяц', 'Всего']]).setFontWeight('bold');
-  const labels = [[monthLabel_(currentKey) + ' (текущий)']].concat(plan.blocks.map((b) => [monthLabel_(b.key)]));
-  sheet.getRange(r0 + 1, t, labels.length, 1).setNumberFormat('@').setValues(labels);
-  const totals = [["='" + SHEETS.summary + "'!B3"]].concat(plan.blocks.map((b) => ['=' + colLetter_(t + 1) + (b.row + 1)]));
-  sheet.getRange(r0 + 1, t + 1, totals.length, 1).setFormulas(totals).setNumberFormat(MONEY_FORMAT);
-  sheet.insertChart(
-    sheet.newChart()
-      .setChartType(Charts.ChartType.COLUMN)
-      .addRange(sheet.getRange(r0, t, Math.min(labels.length, 12) + 1, 2)) // последние 12 месяцев
-      .setNumHeaders(1)
-      .setOption('title', '📈 Траты по месяцам')
-      .setOption('legend', { position: 'none' })
-      .setOption('hAxis', { direction: -1 }) // в таблице свежие сверху, на графике — слева направо по времени
-      .setOption('width', CHARTS.chartWidth)
-      .setOption('height', CHARTS.minBlockRows * ROW_PX - 6)
-      .setPosition(r0, 1, 0, 0)
-      .build()
-  );
-
   plan.blocks.forEach((b) => {
-    const label = monthLabel_(b.key);
+    const label = monthLabel_(b.key) + (b.key === currentKey ? ' (текущий)' : '');
     const tableRow = b.row + 3;
     const first = tableRow + 1;
     const last = b.row + b.height - 1;
-    const H = colLetter_(t + 1);
     sheet.getRange(b.row, t).setNumberFormat('@').setValue('📅 ' + label).setFontWeight('bold').setFontSize(14);
     sheet.getRange(b.row + 1, t).setValue('Всего ушло').setFontColor('#6e6e73');
     sheet.getRange(b.row + 1, t + 1).setFormula('=SUM(' + H + first + ':' + H + last + ')')
@@ -548,7 +559,7 @@ function buildHistoryChartsSheet_(sheet, plan, currentKey) {
         .setChartType(Charts.ChartType.PIE)
         .addRange(sheet.getRange(tableRow, t, last - tableRow + 1, 2))
         .setNumHeaders(1)
-        .setOption('title', label)
+        .setOption('title', 'Куда ушли деньги: ' + label)
         .setOption('pieHole', 0.45)
         .setOption('legend', { position: 'right' })
         .setOption('width', CHARTS.chartWidth)

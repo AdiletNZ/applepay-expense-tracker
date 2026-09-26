@@ -102,7 +102,7 @@ Save it somewhere (for example in Notes). You will paste it in **two** places: t
    - **Review permissions** → pick your Google account
    - You'll see **"Google hasn't verified this app"** → click **Advanced** → **Go to … (unsafe)**
    - Click **Allow**
-   (Google also asks to let the script **run on a schedule**. That's the nightly history update.)
+   (Google also asks to let the script **run on a schedule and when the spreadsheet changes**. That's what keeps the history tabs up to date automatically.)
 4. Go back to your spreadsheet tab. You should now see 6 tabs at the bottom: **Итоги, Операции, Категории, Правила, История, История (Диаграммы)** (see [what each tab does](#how-the-spreadsheet-works)), and a new **💳 Трекер** menu at the top (reload the page if you don't see it).
 
 **Optional test:** choose **`testTransaction`** in the dropdown and click **▶ Run**. A test row "Magnum Cash&Carry, 5 400" appears in the **Операции** tab. Delete that row afterwards (right-click the row number → Delete row).
@@ -277,10 +277,10 @@ The script creates 6 tabs. Their names are in Russian:
 | **Операции** | Transactions | Every purchase ever, one row each: date, shop, amount, currency, category, card |
 | **Категории** | Categories | Which words in a shop name belong to which category. You can edit this. |
 | **Правила** | Rules | Shops you re-categorized by hand. Filled in automatically. |
-| **История** | History | Every purchase from past months as a feed, like a banking app: **newest on top**, grouped by month with the month's total. Date, time, shop, category, amount, card. |
-| **История (Диаграммы)** | History (charts) | For every past month, **the same pie chart you saw on Итоги that month**, with the month's total and category breakdown next to it. Newest months on top; a "spending per month" bar chart at the very top. |
+| **История** | History | Every purchase as a feed, like a banking app: **newest on top**, grouped by month with the month's total. Date, time, shop, category, amount, card. |
+| **История (Диаграммы)** | History (charts) | A pie chart for **every month** (like the one on Итоги) with the month's total and category breakdown next to it. Newest months on top. |
 
-All purchases stay in one list on **Операции**; the other tabs are calculated from it. On the 1st of the month, the month that just ended moves into both history tabs. They are rebuilt automatically **every night**, or instantly via **💳 Трекер → 🔄 Обновить историю** (Update history). To change the category of an old purchase, change it on **Операции**; the history follows.
+All purchases are stored in one list on **Операции**; the other tabs are calculated from it. **Everything updates by itself**: after every purchase, after you change something on Операции (category, amount, deleted row), and once a night as a safety net. You never need to run anything by hand. (The **💳 Трекер → 🔄 Обновить историю** menu item forces a full rebuild if you ever want one.)
 
 **How a category is chosen:**
 1. If the shop is on the **Правила** (Rules) tab, use that category.
