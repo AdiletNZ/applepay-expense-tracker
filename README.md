@@ -317,12 +317,15 @@ Built-in categories include: Groceries, Cafés & restaurants, Food delivery, Tax
 | Notification says **"Впиши свой токен…"** | You didn't replace `ВСТАВЬ_СВОЙ_ТОКЕН`, or you edited the script without re-deploying (see below). |
 | **"Нет листа…"** (sheet missing) | You didn't run `setup` (step A3). |
 | `TypeError: Cannot read properties of undefined` in the editor | You ran the wrong function. Pick `setup` or `testTransaction` in the dropdown. |
+| Running the automation by hand (▶) returns `"не передан магазин (merchant)"` | That's expected: without a real payment there is no shop or amount. The link and token are fine. Test with a real Apple Pay payment. |
+| You're not sure what went wrong | Temporarily put the **Contents of URL** variable into **Show Notification** instead of **Dictionary Value**. The notification then shows the full reply from the sheet, including the exact error. |
+| **Deploy** button is grey in *Manage deployments* | Click the ✏️ **pencil** icon first, then choose **Version → New version**. |
 | URL shows *"Sorry, unable to open the file"* | Open it in a private/incognito window (multiple Google accounts issue). |
 | The sheet shows the word "Merchant" instead of the shop name | In the shortcut, the value must be a blue variable bubble, not typed text. |
 | No notification, no new row | Check that the automation is set to **Run Immediately** and the right cards are selected. |
 | Empty notification | Open the shortcut and check the **Get Dictionary Value** key is exactly `message`. |
 
-**Changed the script code?** Changes only go live after you update the deployment: **Deploy → Manage deployments → ✏️ (edit) → Version: New version → Deploy**. The URL stays the same.
+**Changed the script code?** Changes only go live after you update the deployment: **Deploy → Manage deployments → ✏️ (pencil icon; the Deploy button stays grey until you click it) → Version: New version → Deploy**. The URL stays the same, and afterwards the version shows "Version 2", "Version 3"… 
 
 ### Updating to a new version of the script
 
@@ -332,6 +335,10 @@ Built-in categories include: Groceries, Cafés & restaurants, Food delivery, Tax
 4. Update the deployment: **Deploy → Manage deployments → ✏️ → Version: New version → Deploy**. **Don't** use "New deployment", which would give you a new URL.
 
 Your iPhone automation doesn't need any changes.
+
+### Do I need to do anything every month?
+
+**No.** Once installed, everything runs by itself: on the 1st the Summary tab switches to the new month, the new month gets its own pie chart in History (charts), and every purchase and edit updates the history tabs automatically. You only open Apps Script again if you want to install a newer version of the script.
 
 ---
 
